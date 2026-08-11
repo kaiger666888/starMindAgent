@@ -1,0 +1,1662 @@
+{
+  "domain": "机器学习",
+  "version": "v1.0",
+  "qa_count": 20,
+  "depth_distribution": {
+    "1": 14,
+    "3": 2,
+    "4": 2,
+    "5": 2
+  },
+  "qa_pairs": [
+    {
+      "qa_id": "ml_001",
+      "domain": "机器学习",
+      "depth": 1,
+      "parent_concept_chain": [],
+      "question": "什么是梯度下降？",
+      "reference_answer": "梯度下降是一种迭代优化算法，用于最小化损失函数。它通过沿损失函数梯度的反方向更新参数来逐步逼近最优解。在每次迭代中，算法计算当前参数下损失函数的梯度，然后乘以学习率作为步长进行参数更新。梯度下降有三个主要变体：批量梯度下降使用全部训练数据计算梯度，随机梯度下降（SGD）每次只用一个样本，小批量梯度下降则使用一小批样本。学习率是关键超参数，太大会导致震荡甚至发散，太小则收敛缓慢。在深度学习中，梯度下降通常与反向传播结合使用，反向传播利用链式法则高效计算梯度。",
+      "golden_concepts": [
+        {
+          "canonical_name": "梯度下降",
+          "aliases": [
+            "gradient descent",
+            "GD",
+            "最速下降法"
+          ],
+          "in_answer": true,
+          "note": "PRD 直接引用的归一化示例"
+        },
+        {
+          "canonical_name": "损失函数",
+          "aliases": [
+            "loss function",
+            "代价函数",
+            "cost function"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "学习率",
+          "aliases": [
+            "learning rate",
+            "lr",
+            "步长"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "随机梯度下降",
+          "aliases": [
+            "stochastic gradient descent",
+            "SGD"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "小批量梯度下降",
+          "aliases": [
+            "mini-batch gradient descent",
+            "MBGD"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "反向传播",
+          "aliases": [
+            "backpropagation",
+            "BP",
+            "反向传播算法"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "链式法则",
+          "aliases": [
+            "chain rule"
+          ],
+          "in_answer": true,
+          "note": ""
+        }
+      ],
+      "tags": [
+        "alias_heavy",
+        "cross_lang"
+      ]
+    },
+    {
+      "qa_id": "ml_002",
+      "domain": "机器学习",
+      "depth": 1,
+      "parent_concept_chain": [],
+      "question": "反向传播算法是如何工作的？",
+      "reference_answer": "反向传播是训练神经网络的核心算法，它通过链式法则高效计算损失函数对每一层权重的梯度。算法分为前向传播和反向传播两个阶段：前向传播时，输入数据逐层通过网络，每层计算加权求和并经过激活函数，最终输出预测值并计算损失。反向传播时，从输出层开始，利用链式法则逐层向后计算损失对每个参数的偏导数。具体来说，先计算输出层的误差信号（损失对输出的导数），然后逐层向后传播，每层的误差信号等于上一层误差信号乘以权重矩阵的转置再乘以激活函数的导数。梯度计算完成后，通过梯度下降更新参数。反向传播的效率远高于数值微分，是深度学习训练的基石。",
+      "golden_concepts": [
+        {
+          "canonical_name": "反向传播",
+          "aliases": [
+            "backpropagation",
+            "BP",
+            "反向传播算法"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "链式法则",
+          "aliases": [
+            "chain rule"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "损失函数",
+          "aliases": [
+            "loss function",
+            "代价函数"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "梯度下降",
+          "aliases": [
+            "gradient descent",
+            "GD"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "激活函数",
+          "aliases": [
+            "activation function"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "前向传播",
+          "aliases": [
+            "forward propagation",
+            "前向计算"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "权重",
+          "aliases": [
+            "weight",
+            "权重矩阵"
+          ],
+          "in_answer": true,
+          "note": ""
+        }
+      ],
+      "tags": [
+        "alias_heavy"
+      ]
+    },
+    {
+      "qa_id": "ml_003",
+      "domain": "机器学习",
+      "depth": 1,
+      "parent_concept_chain": [],
+      "question": "什么是过拟合？如何防止？",
+      "reference_answer": "过拟合是指模型在训练数据上表现很好，但在未见过的测试数据上表现差的现象，本质是模型过度学习了训练数据中的噪声和特定模式而非通用规律。防止过拟合的常用方法包括：正则化（L1 正则化促进稀疏性，L2 正则化限制权重大小），Dropout 在训练时随机丢弃神经元，数据增强通过变换扩充训练集，早停法在验证集性能开始下降时停止训练，交叉验证帮助选择合适的模型复杂度，以及集成学习通过组合多个模型降低方差。模型复杂度也应适当控制，过于复杂的模型更容易过拟合。",
+      "golden_concepts": [
+        {
+          "canonical_name": "过拟合",
+          "aliases": [
+            "overfitting",
+            "过学习"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "正则化",
+          "aliases": [
+            "regularization"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "L1正则化",
+          "aliases": [
+            "L1 regularization",
+            "Lasso",
+            "L1正则"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "L2正则化",
+          "aliases": [
+            "L2 regularization",
+            "Ridge",
+            "权重衰减",
+            "weight decay"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "Dropout",
+          "aliases": [
+            "dropout",
+            "随机失活"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "数据增强",
+          "aliases": [
+            "data augmentation"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "早停法",
+          "aliases": [
+            "early stopping"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "交叉验证",
+          "aliases": [
+            "cross validation",
+            "CV"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "集成学习",
+          "aliases": [
+            "ensemble learning"
+          ],
+          "in_answer": true,
+          "note": ""
+        }
+      ],
+      "tags": [
+        "alias_heavy",
+        "cross_lang"
+      ]
+    },
+    {
+      "qa_id": "ml_004",
+      "domain": "机器学习",
+      "depth": 1,
+      "parent_concept_chain": [],
+      "question": "解释一下 L1 和 L2 正则化的区别",
+      "reference_answer": "L1 正则化（Lasso）在损失函数中加入权重绝对值之和作为惩罚项，倾向于产生稀疏权重矩阵，即很多权重变为零，因此可以用于特征选择。L2 正则化（Ridge 或权重衰减）加入权重平方和作为惩罚项，倾向于让权重均匀变小但不为零，适合处理共线性特征。从几何角度看，L1 约束的等高线是菱形，优化解常落在角点（稀疏解）；L2 约束的等高线是圆形，优化解倾向于均匀分布。实际应用中，Elastic Net 结合了 L1 和 L2 的优点。在深度学习中，L2 正则化更常用，因为它不会过度稀疏化网络权重。",
+      "golden_concepts": [
+        {
+          "canonical_name": "L1正则化",
+          "aliases": [
+            "L1 regularization",
+            "Lasso",
+            "L1正则"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "L2正则化",
+          "aliases": [
+            "L2 regularization",
+            "Ridge",
+            "权重衰减",
+            "weight decay"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "正则化",
+          "aliases": [
+            "regularization"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "稀疏性",
+          "aliases": [
+            "sparsity",
+            "稀疏权重"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "特征选择",
+          "aliases": [
+            "feature selection"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "Elastic Net",
+          "aliases": [
+            "弹性网络",
+            "elastic net"
+          ],
+          "in_answer": true,
+          "note": ""
+        }
+      ],
+      "tags": [
+        "alias_heavy",
+        "cross_lang"
+      ]
+    },
+    {
+      "qa_id": "ml_005",
+      "domain": "机器学习",
+      "depth": 1,
+      "parent_concept_chain": [],
+      "question": "交叉验证的原理和作用是什么？",
+      "reference_answer": "交叉验证是一种评估模型泛化能力的模型验证方法。最常用的是 K 折交叉验证：将数据集等分为 K 份，每次取其中 1 份作为验证集，其余 K-1 份作为训练集，重复 K 次，取 K 次验证结果的平均值作为最终评估指标。K 通常取 5 或 10。交叉验证的作用包括：更可靠地估计模型在未见数据上的表现，避免因单次划分导致的评估偏差；辅助超参数调优，通过比较不同超参数组合的交叉验证分数选择最优配置；以及评估模型稳定性。当数据量较小时，留一法交叉验证（LOOCV）是 K 折的极端情况，K 等于样本数。分层采样可保证每折的类别分布与整体一致。",
+      "golden_concepts": [
+        {
+          "canonical_name": "交叉验证",
+          "aliases": [
+            "cross validation",
+            "CV",
+            "交叉检验"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "K折交叉验证",
+          "aliases": [
+            "k-fold cross validation",
+            "K折"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "验证集",
+          "aliases": [
+            "validation set"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "训练集",
+          "aliases": [
+            "training set"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "超参数调优",
+          "aliases": [
+            "hyperparameter tuning",
+            "超参数优化"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "留一法",
+          "aliases": [
+            "leave-one-out cross validation",
+            "LOOCV"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "分层采样",
+          "aliases": [
+            "stratified sampling"
+          ],
+          "in_answer": true,
+          "note": ""
+        }
+      ],
+      "tags": [
+        "cross_lang"
+      ]
+    },
+    {
+      "qa_id": "ml_006",
+      "domain": "机器学习",
+      "depth": 1,
+      "parent_concept_chain": [],
+      "question": "随机森林是如何工作的？",
+      "reference_answer": "随机森林是一种基于决策树的集成学习方法。它通过 Bootstrap 采样从原始训练集中生成多个子集，每个子集训练一棵决策树。在树的每个节点分裂时，随机森林不从全部特征中选择最优分裂特征，而是从随机抽取的特征子集中选择，这进一步增加了树之间的差异性。预测时，分类问题采用多数投票，回归问题取平均值。随机森林的优点包括：能处理高维数据且不需要特征缩放，能评估特征重要性，对过拟合有较好的抵抗力（因为多棵树的平均降低了方差），以及并行训练效率高。袋外误差（OOB error）提供了一种无需额外验证集的内部评估方法。",
+      "golden_concepts": [
+        {
+          "canonical_name": "随机森林",
+          "aliases": [
+            "random forest",
+            "RF"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "决策树",
+          "aliases": [
+            "decision tree"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "集成学习",
+          "aliases": [
+            "ensemble learning",
+            "模型集成"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "Bootstrap采样",
+          "aliases": [
+            "bootstrap sampling",
+            "自助采样法"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "特征重要性",
+          "aliases": [
+            "feature importance"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "袋外误差",
+          "aliases": [
+            "out-of-bag error",
+            "OOB error"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "Bagging",
+          "aliases": [
+            "bagging",
+            "装袋法"
+          ],
+          "in_answer": true,
+          "note": ""
+        }
+      ],
+      "tags": [
+        "cross_lang"
+      ]
+    },
+    {
+      "qa_id": "ml_007",
+      "domain": "机器学习",
+      "depth": 1,
+      "parent_concept_chain": [],
+      "question": "支持向量机的基本原理是什么？",
+      "reference_answer": "支持向量机（SVM）是一种二分类模型，其基本思想是在特征空间中找到能最大化分类间隔的超平面。距离超平面最近的样本点称为支持向量，它们决定了超平面的位置。对于线性不可分的情况，SVM 引入软间隔允许一定程度的误分类，通过惩罚参数 C 控制间隔与误分类的权衡。对于非线性问题，SVM 使用核技巧将数据映射到高维空间使其线性可分，常用核函数包括径向基核函数（RBF）、多项式核和线性核。SVM 的对偶问题使其计算复杂度依赖支持向量数量而非特征维度，适合高维数据。SVM 也可推广到回归问题（SVR）和多分类。",
+      "golden_concepts": [
+        {
+          "canonical_name": "支持向量机",
+          "aliases": [
+            "support vector machine",
+            "SVM"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "支持向量",
+          "aliases": [
+            "support vector"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "核技巧",
+          "aliases": [
+            "kernel trick",
+            "核方法"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "径向基核函数",
+          "aliases": [
+            "radial basis function",
+            "RBF",
+            "高斯核"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "软间隔",
+          "aliases": [
+            "soft margin"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "超平面",
+          "aliases": [
+            "hyperplane"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "对偶问题",
+          "aliases": [
+            "dual problem"
+          ],
+          "in_answer": true,
+          "note": ""
+        }
+      ],
+      "tags": [
+        "alias_heavy",
+        "cross_lang"
+      ]
+    },
+    {
+      "qa_id": "ml_008",
+      "domain": "机器学习",
+      "depth": 1,
+      "parent_concept_chain": [],
+      "question": "卷积神经网络的核心组件有哪些？",
+      "reference_answer": "卷积神经网络（CNN）是专门处理网格状数据（如图像）的深度学习模型。其核心组件包括：卷积层通过卷积核在输入上滑动做局部加权求和，提取空间特征，相比全连接层大幅减少参数量；池化层对特征图进行下采样，降低空间维度，最常用的是最大池化；激活函数通常使用 ReLU，提供非线性能力且计算高效；全连接层通常在网络的末端将特征映射到输出空间。CNN 的关键特性包括局部连接（每个神经元只关注局部区域）、权值共享（同一卷积核在整个输入上共享参数）和平移不变性。经典架构如 ResNet 引入残差连接解决深层网络退化问题，VGG 使用统一的小卷积核，Inception 模块则并行使用不同尺寸的卷积核。",
+      "golden_concepts": [
+        {
+          "canonical_name": "卷积神经网络",
+          "aliases": [
+            "convolutional neural network",
+            "CNN"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "卷积层",
+          "aliases": [
+            "convolutional layer",
+            "卷积"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "卷积核",
+          "aliases": [
+            "convolution kernel",
+            "filter",
+            "滤波器"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "池化层",
+          "aliases": [
+            "pooling layer",
+            "池化"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "最大池化",
+          "aliases": [
+            "max pooling"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "ReLU",
+          "aliases": [
+            "rectified linear unit",
+            "ReLU激活函数"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "全连接层",
+          "aliases": [
+            "fully connected layer",
+            "FC层",
+            "dense layer"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "残差连接",
+          "aliases": [
+            "residual connection",
+            "skip connection",
+            "跳跃连接"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "权值共享",
+          "aliases": [
+            "weight sharing"
+          ],
+          "in_answer": true,
+          "note": ""
+        }
+      ],
+      "tags": [
+        "alias_heavy",
+        "cross_lang"
+      ]
+    },
+    {
+      "qa_id": "ml_009",
+      "domain": "机器学习",
+      "depth": 1,
+      "parent_concept_chain": [],
+      "question": "注意力机制的原理是什么？",
+      "reference_answer": "注意力机制借鉴人类视觉注意力的思想，让模型在处理输入时能动态地关注最相关的部分。在序列到序列任务中，注意力机制为解码器的每个时间步计算与编码器各位置的关联度（注意力分数），通常通过点积或加性方式计算，经 Softmax 归一化后作为权重对编码器输出加权求和，得到上下文向量。自注意力是 Transformer 的核心，它让序列中的每个位置都能直接关注所有其他位置，通过查询、键、值三组矩阵实现。多头注意力并行运行多个注意力头，使模型能同时关注不同子空间的信息。注意力机制解决了 RNN 长序列依赖和并行化困难的问题。",
+      "golden_concepts": [
+        {
+          "canonical_name": "注意力机制",
+          "aliases": [
+            "attention mechanism",
+            "attention"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "自注意力",
+          "aliases": [
+            "self-attention",
+            "自注意力机制"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "Transformer",
+          "aliases": [
+            "transformer"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "多头注意力",
+          "aliases": [
+            "multi-head attention",
+            "MHA"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "Softmax",
+          "aliases": [
+            "softmax",
+            "归一化指数函数"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "上下文向量",
+          "aliases": [
+            "context vector"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "查询键值",
+          "aliases": [
+            "query key value",
+            "QKV"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "循环神经网络",
+          "aliases": [
+            "recurrent neural network",
+            "RNN"
+          ],
+          "in_answer": true,
+          "note": ""
+        }
+      ],
+      "tags": [
+        "alias_heavy",
+        "cross_lang"
+      ]
+    },
+    {
+      "qa_id": "ml_010",
+      "domain": "机器学习",
+      "depth": 1,
+      "parent_concept_chain": [],
+      "question": "批归一化的作用和原理是什么？",
+      "reference_answer": "批归一化（Batch Normalization, BN）通过在每个 mini-batch 内对层的输入进行标准化，将其归一化到均值为 0、方差为 1 的分布，然后通过可学习的缩放和平移参数恢复表达能力。BN 的主要作用包括：加速训练收敛，允许使用更大的学习率；缓解内部协变量偏移问题，即深层网络中各层输入分布随训练变化的问题；降低对参数初始化的敏感性；以及具有一定的正则化效果。BN 在推理时使用训练阶段累积的移动平均值而非 batch 统计量。BN 的变体包括层归一化（Layer Norm，对单个样本的所有特征归一化，适合序列模型）和组归一化（Group Norm，将通道分组归一化，适合小 batch 场景）。",
+      "golden_concepts": [
+        {
+          "canonical_name": "批归一化",
+          "aliases": [
+            "batch normalization",
+            "BatchNorm",
+            "BN"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "内部协变量偏移",
+          "aliases": [
+            "internal covariate shift"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "层归一化",
+          "aliases": [
+            "layer normalization",
+            "LayerNorm",
+            "LN"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "组归一化",
+          "aliases": [
+            "group normalization",
+            "GroupNorm",
+            "GN"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "学习率",
+          "aliases": [
+            "learning rate"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "正则化",
+          "aliases": [
+            "regularization"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "移动平均",
+          "aliases": [
+            "moving average",
+            "滑动平均"
+          ],
+          "in_answer": true,
+          "note": ""
+        }
+      ],
+      "tags": [
+        "alias_heavy",
+        "cross_lang"
+      ]
+    },
+    {
+      "qa_id": "ml_011",
+      "domain": "机器学习",
+      "depth": 1,
+      "parent_concept_chain": [],
+      "question": "常见的损失函数有哪些？",
+      "reference_answer": "损失函数衡量模型预测值与真实值之间的差异，是模型优化的目标。回归任务常用均方误差（MSE），对大误差敏感；平均绝对误差（MAE）对异常值更鲁棒。分类任务常用交叉熵损失，二分类用二元交叉熵，多分类用分类交叉熵，它能度量预测概率分布与真实分布的差异。Focal Loss 在交叉熵基础上增加调制因子，解决类别不平衡问题。排序任务常用 Hinge Loss 或对比损失。在深度学习中，损失函数的选择应与任务对齐，有时需要组合多种损失。例如目标检测同时使用分类损失和边界框回归损失。损失函数的设计直接影响模型优化的方向和效果。",
+      "golden_concepts": [
+        {
+          "canonical_name": "损失函数",
+          "aliases": [
+            "loss function",
+            "代价函数",
+            "cost function"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "均方误差",
+          "aliases": [
+            "mean squared error",
+            "MSE",
+            "L2损失"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "平均绝对误差",
+          "aliases": [
+            "mean absolute error",
+            "MAE",
+            "L1损失"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "交叉熵",
+          "aliases": [
+            "cross entropy",
+            "交叉熵损失"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "二元交叉熵",
+          "aliases": [
+            "binary cross entropy",
+            "BCE"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "Focal Loss",
+          "aliases": [
+            "focal loss"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "Hinge Loss",
+          "aliases": [
+            "hinge loss",
+            "合页损失"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "类别不平衡",
+          "aliases": [
+            "class imbalance",
+            "类别不均衡"
+          ],
+          "in_answer": true,
+          "note": ""
+        }
+      ],
+      "tags": [
+        "alias_heavy",
+        "cross_lang"
+      ]
+    },
+    {
+      "qa_id": "ml_012",
+      "domain": "机器学习",
+      "depth": 1,
+      "parent_concept_chain": [],
+      "question": "集成学习的主要方法有哪些？",
+      "reference_answer": "集成学习通过组合多个基学习器来提升预测性能，主要分为两类。Bagging（Bootstrap Aggregating）对训练数据进行有放回采样生成多个子集，独立训练多个基学习器后通过投票或平均集成，代表算法是随机森林，主要降低方差。Boosting 是序列化方法，每个新模型着重纠正前一个模型的错误，通过调整样本权重使后续模型关注难分类样本，代表算法包括 AdaBoost、梯度提升树（GBDT）和 XGBoost、LightGBM，主要降低偏差。Stacking 用初级学习器的预测作为次级学习器的输入进行再训练。集成学习的效果取决于基学习器的准确性和多样性，基学习器之间差异越大，集成效果通常越好。",
+      "golden_concepts": [
+        {
+          "canonical_name": "集成学习",
+          "aliases": [
+            "ensemble learning",
+            "模型集成"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "Bagging",
+          "aliases": [
+            "bagging",
+            "装袋法",
+            "Bootstrap Aggregating"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "Boosting",
+          "aliases": [
+            "boosting",
+            "提升法"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "随机森林",
+          "aliases": [
+            "random forest",
+            "RF"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "AdaBoost",
+          "aliases": [
+            "adaptive boosting",
+            "AdaBoost"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "梯度提升树",
+          "aliases": [
+            "gradient boosting decision tree",
+            "GBDT",
+            "梯度提升"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "XGBoost",
+          "aliases": [
+            "extreme gradient boosting"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "LightGBM",
+          "aliases": [
+            "light gradient boosting machine"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "Stacking",
+          "aliases": [
+            "stacking",
+            "堆叠法"
+          ],
+          "in_answer": true,
+          "note": ""
+        }
+      ],
+      "tags": [
+        "alias_heavy",
+        "cross_lang"
+      ]
+    },
+    {
+      "qa_id": "ml_013",
+      "domain": "机器学习",
+      "depth": 1,
+      "parent_concept_chain": [],
+      "question": "主成分分析的原理和应用场景",
+      "reference_answer": "主成分分析（PCA）是一种无监督的线性降维方法。它通过协方差矩阵的特征值分解找到数据方差最大的方向，将高维数据投影到低维空间同时保留尽可能多的信息。具体步骤包括：数据中心化，计算协方差矩阵，求特征值和特征向量，按特征值大小排序选取前 K 个特征向量作为主成分，将原始数据投影到这 K 个主成分构成的子空间。PCA 的应用场景包括数据可视化（降至 2-3 维）、特征压缩、噪声过滤和加速后续模型训练。PCA 的局限性在于它只捕获线性关系，且主成分可能缺乏可解释性。对于非线性降维，可使用 t-SNE 或 UMAP。选择主成分数量通常通过累计方差贡献率确定，一般保留 95% 以上的方差。",
+      "golden_concepts": [
+        {
+          "canonical_name": "主成分分析",
+          "aliases": [
+            "principal component analysis",
+            "PCA"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "降维",
+          "aliases": [
+            "dimensionality reduction",
+            "维度约简"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "协方差矩阵",
+          "aliases": [
+            "covariance matrix"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "特征值分解",
+          "aliases": [
+            "eigenvalue decomposition",
+            "特征分解"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "特征向量",
+          "aliases": [
+            "eigenvector"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "方差贡献率",
+          "aliases": [
+            "variance explained",
+            "explained variance ratio"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "t-SNE",
+          "aliases": [
+            "t-SNE",
+            "t分布随机邻域嵌入"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "UMAP",
+          "aliases": [
+            "uniform manifold approximation and projection"
+          ],
+          "in_answer": true,
+          "note": ""
+        }
+      ],
+      "tags": [
+        "cross_lang"
+      ]
+    },
+    {
+      "qa_id": "ml_014",
+      "domain": "机器学习",
+      "depth": 1,
+      "parent_concept_chain": [],
+      "question": "K均值聚类的工作原理",
+      "reference_answer": "K均值聚类是一种经典的无监督聚类算法。算法流程为：随机初始化 K 个聚类中心，然后迭代执行两个步骤——分配步骤将每个样本分配到最近的聚类中心所在的簇，更新步骤将每个簇的中心设为该簇所有样本的均值，直到聚类中心不再显著变化或达到最大迭代次数。K 值的选择可通过肘部法则或轮廓系数确定。K均值的优点是简单高效、可扩展性好；缺点是对初始中心敏感（可用 K-means++ 改进）、只能发现球形簇、对异常值敏感、需预先指定 K 值。对于非凸形状的簇，可使用 DBSCAN 等基于密度的方法。K均值常用于客户分群、图像压缩、异常检测等场景。",
+      "golden_concepts": [
+        {
+          "canonical_name": "K均值聚类",
+          "aliases": [
+            "k-means clustering",
+            "K-means",
+            "K均值"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "聚类中心",
+          "aliases": [
+            "cluster center",
+            "质心",
+            "centroid"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "肘部法则",
+          "aliases": [
+            "elbow method"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "轮廓系数",
+          "aliases": [
+            "silhouette coefficient",
+            "silhouette score"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "K-means++",
+          "aliases": [
+            "k-means++",
+            "K-means plus"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "DBSCAN",
+          "aliases": [
+            "density-based spatial clustering",
+            "DBSCAN"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "无监督学习",
+          "aliases": [
+            "unsupervised learning"
+          ],
+          "in_answer": true,
+          "note": ""
+        }
+      ],
+      "tags": [
+        "cross_lang"
+      ]
+    },
+    {
+      "qa_id": "ml_015",
+      "domain": "机器学习",
+      "depth": 3,
+      "parent_concept_chain": [
+        "神经网络",
+        "优化算法",
+        "学习率"
+      ],
+      "question": "学习率衰减策略有哪些？",
+      "reference_answer": "学习率衰减是在训练过程中逐步降低学习率的策略，前期用较大学习率快速接近最优区域，后期用较小学习率精细调整。常见策略包括：阶跃衰减按固定轮数将学习率乘以衰减因子；余弦退火按余弦函数周期性变化学习率，可配合热重启；指数衰减按指数函数连续降低；多项式衰减在指定轮数内平滑降至最小值。Warmup 策略在训练初期从零线性增大学习率，避免初始阶段梯度不稳定，在 Transformer 训练中广泛使用。自适应学习率方法如 Adam、AdamW 内置了逐参数的自适应调整，但仍可与全局衰减策略组合使用。学习率衰减的有效性依赖于合理的初始学习率和总训练轮数设置。",
+      "golden_concepts": [
+        {
+          "canonical_name": "学习率衰减",
+          "aliases": [
+            "learning rate decay",
+            "学习率调度",
+            "lr schedule"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "余弦退火",
+          "aliases": [
+            "cosine annealing",
+            "余弦退火学习率"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "热重启",
+          "aliases": [
+            "warm restart",
+            "SGDR"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "Warmup",
+          "aliases": [
+            "learning rate warmup",
+            "预热"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "Adam",
+          "aliases": [
+            "adaptive moment estimation",
+            "Adam优化器"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "AdamW",
+          "aliases": [
+            "AdamW",
+            "decoupled weight decay"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "阶跃衰减",
+          "aliases": [
+            "step decay"
+          ],
+          "in_answer": true,
+          "note": ""
+        }
+      ],
+      "tags": [
+        "cross_lang",
+        "depth_sensitive"
+      ]
+    },
+    {
+      "qa_id": "ml_016",
+      "domain": "机器学习",
+      "depth": 3,
+      "parent_concept_chain": [
+        "深度学习",
+        "反向传播",
+        "梯度消失"
+      ],
+      "question": "梯度消失和梯度爆炸问题的成因和解决方案",
+      "reference_answer": "梯度消失和梯度爆炸是深度神经网络训练中的常见问题，根源在于反向传播时梯度通过链式法则逐层相乘。当激活函数导数或权重值小于 1 时，梯度在多层传播后会指数级衰减（梯度消失），导致浅层权重几乎不更新；当权重值大于 1 时则指数级增长（梯度爆炸），导致参数震荡发散。解决方案包括：使用 ReLU 等非饱和激活函数避免导数过小；残差连接提供梯度捷径绕过深层乘法；批归一化和层归一化控制每层输入分布；梯度裁剪限制梯度范数防止爆炸；合理的权重初始化（如 He 初始化、Xavier 初始化）使各层方差稳定；以及使用 LSTM 或 GRU 缓解循环网络中的长程依赖问题。",
+      "golden_concepts": [
+        {
+          "canonical_name": "梯度消失",
+          "aliases": [
+            "vanishing gradient",
+            "梯度消失问题"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "梯度爆炸",
+          "aliases": [
+            "exploding gradient",
+            "梯度爆炸问题"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "残差连接",
+          "aliases": [
+            "residual connection",
+            "skip connection",
+            "跳跃连接"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "梯度裁剪",
+          "aliases": [
+            "gradient clipping"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "ReLU",
+          "aliases": [
+            "rectified linear unit"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "批归一化",
+          "aliases": [
+            "batch normalization",
+            "BatchNorm",
+            "BN"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "He初始化",
+          "aliases": [
+            "He initialization",
+            "He正态初始化"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "Xavier初始化",
+          "aliases": [
+            "Xavier initialization",
+            "Glorot初始化"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "LSTM",
+          "aliases": [
+            "long short-term memory",
+            "长短期记忆网络"
+          ],
+          "in_answer": true,
+          "note": ""
+        }
+      ],
+      "tags": [
+        "alias_heavy",
+        "cross_lang",
+        "depth_sensitive"
+      ]
+    },
+    {
+      "qa_id": "ml_017",
+      "domain": "机器学习",
+      "depth": 4,
+      "parent_concept_chain": [
+        "机器学习",
+        "正则化",
+        "深度学习正则化",
+        "Dropout"
+      ],
+      "question": "Dropout 的具体实现和原理",
+      "reference_answer": "Dropout 是一种深度学习正则化技术，在训练时以概率 p 随机将神经元输出置零，被丢弃的神经元不参与本轮前向传播和反向传播。推理时不执行丢弃，但需将输出乘以 (1-p) 以保持期望值一致（或训练时做反向缩放）。Dropout 的正则化机制包括：阻止神经元共适应，迫使每个神经元学习更鲁棒的特征；等效于训练 exponentially 级别的子网络的集成；在权重空间中引入噪声起到正则化效果。Dropout 率 p 通常设为 0.2-0.5，过大会导致欠拟合。Dropout 常用于全连接层，卷积层中由于特征图空间相关性强，效果有限，可改用 Spatial Dropout 按通道丢弃。Dropout 可与批归一化组合使用，但需注意训练/推理模式的切换顺序。",
+      "golden_concepts": [
+        {
+          "canonical_name": "Dropout",
+          "aliases": [
+            "dropout",
+            "随机失活"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "正则化",
+          "aliases": [
+            "regularization"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "共适应",
+          "aliases": [
+            "co-adaptation",
+            "神经元共适应"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "Spatial Dropout",
+          "aliases": [
+            "spatial dropout",
+            "空间随机失活"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "批归一化",
+          "aliases": [
+            "batch normalization",
+            "BatchNorm",
+            "BN"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "欠拟合",
+          "aliases": [
+            "underfitting"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "集成学习",
+          "aliases": [
+            "ensemble learning"
+          ],
+          "in_answer": true,
+          "note": ""
+        }
+      ],
+      "tags": [
+        "cross_lang",
+        "depth_sensitive"
+      ]
+    },
+    {
+      "qa_id": "ml_018",
+      "domain": "机器学习",
+      "depth": 4,
+      "parent_concept_chain": [
+        "深度学习",
+        "注意力机制",
+        "序列模型",
+        "Transformer"
+      ],
+      "question": "Transformer 的位置编码为什么重要？",
+      "reference_answer": "Transformer 完全基于自注意力机制，没有循环或卷积结构，本身不具备捕捉序列顺序的能力。位置编码为模型注入位置信息，使注意力机制能区分不同位置的 token。原始 Transformer 使用正弦余弦函数生成固定的位置编码，不同维度使用不同频率的正弦波，使模型能学习相对位置关系。可学习的位置编码将位置嵌入作为可训练参数，灵活性更强但缺乏外推能力。旋转位置编码（RoPE）通过旋转矩阵将相对位置信息编码到注意力计算中，支持长度外推，在 LLaMA 等大模型中广泛应用。ALiBi 则通过在注意力分数中加上与距离成比例的偏置实现位置感知。位置编码的设计直接影响模型对长序列的建模能力。",
+      "golden_concepts": [
+        {
+          "canonical_name": "位置编码",
+          "aliases": [
+            "positional encoding",
+            "位置嵌入",
+            "positional embedding"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "Transformer",
+          "aliases": [
+            "transformer"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "自注意力",
+          "aliases": [
+            "self-attention"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "旋转位置编码",
+          "aliases": [
+            "rotary position embedding",
+            "RoPE"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "正弦余弦编码",
+          "aliases": [
+            "sinusoidal positional encoding",
+            "正弦位置编码"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "长度外推",
+          "aliases": [
+            "length extrapolation",
+            "外推性"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "ALiBi",
+          "aliases": [
+            "attention with linear biases",
+            "ALiBi"
+          ],
+          "in_answer": true,
+          "note": ""
+        }
+      ],
+      "tags": [
+        "cross_lang",
+        "depth_sensitive"
+      ]
+    },
+    {
+      "qa_id": "ml_019",
+      "domain": "机器学习",
+      "depth": 5,
+      "parent_concept_chain": [
+        "深度学习",
+        "卷积神经网络",
+        "深层网络训练",
+        "梯度问题",
+        "残差连接"
+      ],
+      "question": "残差连接为什么能解决深层网络退化？",
+      "reference_answer": "残差连接（Residual Connection）通过将输入直接加到输出上，形成恒等映射的捷径。其核心洞察是：深层网络至少不应比浅层网络差，但实际训练中深层网络出现退化（非过拟合），说明优化困难。残差连接将网络的学习目标从拟合完整映射 H(x) 改为拟合残差 F(x) = H(x) - x，当最优解接近恒等映射时，将残差驱动到零比学习恒等映射更容易。从梯度流角度，残差连接提供了梯度直接传播的捷径，使梯度可以绕过深层非线性变换，缓解梯度消失。数学上，残差块的梯度为 dF/dx + 1，常数项 1 保证梯度至少不衰减。残差连接使得训练上百甚至上千层的网络成为可能，是 ResNet 成功的关键。",
+      "golden_concepts": [
+        {
+          "canonical_name": "残差连接",
+          "aliases": [
+            "residual connection",
+            "skip connection",
+            "跳跃连接"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "恒等映射",
+          "aliases": [
+            "identity mapping",
+            "恒等映射"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "梯度消失",
+          "aliases": [
+            "vanishing gradient"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "ResNet",
+          "aliases": [
+            "residual network",
+            "残差网络"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "网络退化",
+          "aliases": [
+            "degradation problem",
+            "退化问题"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "梯度流",
+          "aliases": [
+            "gradient flow",
+            "梯度传播"
+          ],
+          "in_answer": true,
+          "note": ""
+        }
+      ],
+      "tags": [
+        "cross_lang",
+        "depth_sensitive"
+      ]
+    },
+    {
+      "qa_id": "ml_020",
+      "domain": "机器学习",
+      "depth": 5,
+      "parent_concept_chain": [
+        "机器学习",
+        "表征学习",
+        "自监督学习",
+        "对比学习",
+        "InfoNCE损失"
+      ],
+      "question": "对比学习中 InfoNCE 损失的作用",
+      "reference_answer": "InfoNCE 损失是对比学习中的核心目标函数，源于噪声对比估计（NCE）的信息论推广。它通过 InfoNCE 将正样本对拉近、负样本对推远来学习表征。具体形式为：给定一个查询样本和一组候选样本（含 1 个正样本和 N-1 个负样本），InfoNCE 损失等价于让模型从 N 个候选中识别出正样本的分类交叉熵。温度系数控制分布的平滑程度，较小的温度使模型更关注困难负样本。InfoNCE 的下界与互信息相关，最大化正样本对之间的互信息下界。在 SimCLR 中，InfoNCE 对同一图像的两个增强视图（正对）与不同图像的视图（负对）计算。MoCo 通过动量编码器和队列维护大量负样本。InfoNCE 的有效性依赖于足够多的负样本和有效的数据增强策略。",
+      "golden_concepts": [
+        {
+          "canonical_name": "对比学习",
+          "aliases": [
+            "contrastive learning"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "InfoNCE",
+          "aliases": [
+            "info noise contrastive estimation",
+            "InfoNCE损失"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "噪声对比估计",
+          "aliases": [
+            "noise contrastive estimation",
+            "NCE"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "互信息",
+          "aliases": [
+            "mutual information"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "SimCLR",
+          "aliases": [
+            "simple framework for contrastive learning"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "MoCo",
+          "aliases": [
+            "momentum contrast"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "温度系数",
+          "aliases": [
+            "temperature parameter",
+            "温度参数"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "数据增强",
+          "aliases": [
+            "data augmentation"
+          ],
+          "in_answer": true,
+          "note": ""
+        },
+        {
+          "canonical_name": "动量编码器",
+          "aliases": [
+            "momentum encoder"
+          ],
+          "in_answer": true,
+          "note": ""
+        }
+      ],
+      "tags": [
+        "cross_lang",
+        "depth_sensitive"
+      ]
+    }
+  ]
+}

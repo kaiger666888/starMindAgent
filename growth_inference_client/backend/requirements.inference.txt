@@ -1,0 +1,7 @@
+# InferenceClient 推理框架层额外依赖
+httpx>=0.27
+# 可选：精确 token 估算（不可用时退化为字符数估算）
+# tiktoken>=0.7
+# 可选：本地引擎约束解码（不可用时退化为正则 + Pydantic 路径）
+# outlines>=0.0.40
+# xgrammar>=0.1.0

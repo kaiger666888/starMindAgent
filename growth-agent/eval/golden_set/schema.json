@@ -1,0 +1,32 @@
+{
+  "$schema": "golden_set_v1.0",
+  "description": "「伴你成长」学习 Agent 概念抽取评测 Golden Set",
+  "qa_pair_format": {
+    "qa_id": "str - 唯一标识 (domain_prefix_NNN)",
+    "domain": "str - 领域名",
+    "depth": "int - 探索树深度 (1=根问题, 3-5=层级累积评测)",
+    "parent_concept_chain": "list[str] - 父概念链 (depth>1时必填)",
+    "question": "str - 用户问题",
+    "reference_answer": "str - 参考答案",
+    "golden_concepts": [
+      {
+        "canonical_name": "str - 规范概念名",
+        "aliases": "list[str] - 别名列表 (中英文/缩写)",
+        "in_answer": "bool - 是否出现在参考答案中",
+        "note": "str - 标注备注"
+      }
+    ],
+    "tags": "list[str] - 标签 (alias_heavy/cross_lang/depth_sensitive)"
+  },
+  "matching_rule": "canonical_name + aliases 双轨匹配: 规范名精确匹配 / 预测规范名命中golden别名 / 预测别名命中golden规范名 / 别名交集",
+  "domains": [
+    "机器学习",
+    "计算机网络",
+    "数据库系统"
+  ],
+  "target_metrics": {
+    "extraction_f1_gate": 0.8,
+    "false_merge_rate_gate": 0.05,
+    "merge_recall_gate": 0.85
+  }
+}

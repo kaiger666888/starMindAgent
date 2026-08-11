@@ -1,0 +1,9 @@
+{
+  "alias_exact_match": true,
+  "embedding_recall_topk": 5,
+  "embedding_high": 0.92,
+  "embedding_low": 0.78,
+  "llm_gray_zone_enabled": true,
+  "target_merge_precision": 0.95,
+  "target_merge_recall": 0.85
+}

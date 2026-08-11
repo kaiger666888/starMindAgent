@@ -1,0 +1,11 @@
+fastapi>=0.110
+uvicorn[standard]>=0.27
+sqlalchemy>=2.0
+asyncpg>=0.29
+pydantic>=2.6
+python-multipart>=0.0.9
+# 测试
+pytest>=8.0
+pytest-asyncio>=0.23
+# 本地 sqlite 替代（可选，免装 PG）
+aiosqlite>=0.19
