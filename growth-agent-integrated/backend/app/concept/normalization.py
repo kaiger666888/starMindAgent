@@ -13,7 +13,8 @@ from __future__ import annotations
 import logging
 from typing import Optional, Protocol
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, cast, literal
+from sqlalchemy.dialects.postgresql import JSONB
 
 from app.db import session_scope
 from app.models.tables import ConceptNode, AuditLog
@@ -141,7 +142,7 @@ class ConceptNormalizer:
                 await s.execute(
                     select(ConceptNode).where(
                         (ConceptNode.canonical_name == name)
-                        | ConceptNode.aliases.op('@>')(f'["{name}"]')
+                        | ConceptNode.aliases.op('@>')(cast(literal(f'["{name}"]'), JSONB))
                     )
                 )
             ).scalar_one_or_none()

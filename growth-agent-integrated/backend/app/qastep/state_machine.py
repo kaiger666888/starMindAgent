@@ -111,7 +111,7 @@ class QAStepPipeline:
           {type: 'done', qa_id}           — 进入 waiting
         """
         # —— generating：流式正文 ——
-        await self.repo.transition(self.qa_id, QAStatus.GENERATING)
+        # QAStep 在 repo.create() 时已置 GENERATING，这里只发语义通知，不重复转换
         yield {"type": "status", "status": QAStatus.GENERATING.value}
 
         answer_buf: list[str] = []

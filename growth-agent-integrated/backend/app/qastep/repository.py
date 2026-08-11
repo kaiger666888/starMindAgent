@@ -71,10 +71,10 @@ class QAStepRepository:
             # 用 PG 的 || 拼接，避免读改写竞态；answer_offset 跟随正文长度推进
             await s.execute(text(
                 "UPDATE qa_step "
-                "SET answer = COALESCE(answer,'') || :d, "
-                "    answer_offset = char_length(COALESCE(answer,'') || :d), "
+                "SET answer = COALESCE(answer,'') || CAST(:d AS TEXT), "
+                "    answer_offset = char_length(COALESCE(answer,'') || CAST(:d AS TEXT)), "
                 "    version = version + 1 "
-                "WHERE qa_id = :id"
+                "WHERE qa_id = CAST(:id AS uuid)"
             ).bindparams(d=delta, id=qa_id))
 
     async def restore_context(self, qa_id: str) -> dict:
