@@ -122,20 +122,20 @@ class OpenAICompatibleBackend:
                 f"{settings.concept_sentinel}，最后输出 ConceptBlock JSON。"},
                 {"role": "user", "content": prompt}],
         }
-        async with httpx.AsyncStream(
-            self.endpoint, method="POST", headers={"Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"}, json=payload, timeout=settings.inference_timeout_s,
-        ) as resp:
-            async for line in resp.aiter_lines():
-                if self._aborted:
-                    break
-                if line.startswith("data: ") and line.strip() != "data: [DONE]":
-                    try:
-                        delta = json.loads(line[6:])["choices"][0]["delta"].get("content", "")
-                        if delta:
-                            yield delta
-                    except (json.JSONDecodeError, KeyError, IndexError):
-                        continue
+        async with httpx.AsyncClient(timeout=settings.inference_timeout_s) as client:
+            async with client.stream("POST", self.endpoint,
+                headers={"Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"}, json=payload) as resp:
+                async for line in resp.aiter_lines():
+                    if self._aborted:
+                        break
+                    if line.startswith("data: ") and line.strip() != "data: [DONE]":
+                        try:
+                            delta = json.loads(line[6:])["choices"][0]["delta"].get("content", "")
+                            if delta:
+                                yield delta
+                        except (json.JSONDecodeError, KeyError, IndexError):
+                            continue
 
     async def extract_only(self, answer_text: str) -> ConceptBlock:
         import httpx
