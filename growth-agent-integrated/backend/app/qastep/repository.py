@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from sqlalchemy import select, update, func, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import NoResultFound
 
 from app.db import session_scope
@@ -84,6 +85,63 @@ class QAStepRepository:
                 "UPDATE qa_step SET layer_summary = :s WHERE qa_id = CAST(:id AS uuid)"
             ).bindparams(s=summary, id=qa_id))
 
+    async def mark_browsed_not_drilled(self, qa_id: str) -> None:
+        """需求六"放弃探索"：用户回上层未下钻，标记 browsed_not_drilled。
+
+        前提：该 QAStep 无子节点（无下钻）。若有子 QAStep，不算放弃。
+        """
+        async with session_scope() as s:
+            # 子数 = 0 才算放弃
+            child_cnt = (
+                await s.execute(text(
+                    "SELECT count(*) FROM qa_step WHERE parent_qa_id = CAST(:id AS uuid)"
+                ).bindparams(id=qa_id))
+            ).scalar() or 0
+            if child_cnt == 0:
+                await s.execute(text(
+                    "UPDATE qa_step SET browsed_not_drilled = true "
+                    "WHERE qa_id = CAST(:id AS uuid)"
+                ).bindparams(id=qa_id))
+
+    async def evaluate_concept_maturity(self, qa_id: str) -> int:
+        """需求三"概念成熟度"：若概念 explore_count≥2 且该 QAStep 未下钻，
+        标记 understood=true。返回被标记的概念数。
+        """
+        async with session_scope() as s:
+            # 该 qa_step 抽取的 concept_ids
+            row = (
+                await s.execute(text(
+                    "SELECT extracted_concept_ids FROM qa_step "
+                    "WHERE qa_id = CAST(:id AS uuid)"
+                ).bindparams(id=qa_id))
+            ).first()
+            if not row or not row[0]:
+                return 0
+            concept_ids = row[0]
+            # 未下钻（无子）
+            child_cnt = (
+                await s.execute(text(
+                    "SELECT count(*) FROM qa_step WHERE parent_qa_id = CAST(:id AS uuid)"
+                ).bindparams(id=qa_id))
+            ).scalar() or 0
+            if child_cnt > 0:
+                return 0  # 已下钻，不算"已理解"
+            marked = 0
+            for cid in concept_ids:
+                cnt = (
+                    await s.execute(text(
+                        "SELECT explore_count FROM concept_node "
+                        "WHERE concept_id = CAST(:id AS uuid)"
+                    ).bindparams(id=str(cid)))
+                ).scalar() or 0
+                if cnt >= 2:
+                    await s.execute(text(
+                        "UPDATE concept_node SET understood = true "
+                        "WHERE concept_id = CAST(:id AS uuid)"
+                    ).bindparams(id=str(cid)))
+                    marked += 1
+            return marked
+
     async def restore_context(self, qa_id: str) -> dict:
         """回上层：恢复该 QAStep 的完整现场（answer + 概念 + offset）。"""
         async with session_scope() as s:
@@ -138,10 +196,11 @@ class QAStepRepository:
             # 记录 user_click 边（状态一）：source 取父 QAStep 首个已抽取概念，target 为被下钻概念
             parent_concepts = parent.extracted_concept_ids or []
             if parent_concepts:
-                s.add(ConceptEdge(
+                stmt = pg_insert(ConceptEdge).values(
                     session_id=session_id, source_id=parent_concepts[0],
                     target_id=concept_id, origin="user_click",
-                ))
+                ).on_conflict_do_nothing()
+                await s.execute(stmt)
             await s.flush()
             return CreatedQA(qa_id=child.qa_id, question=child.question)
 
@@ -151,12 +210,14 @@ class QAStepRepository:
             return
         async with session_scope() as s:
             ids = [c["concept_id"] for c in concepts if c.get("concept_id")]
+            # 幂等：同一对概念已建边则跳过（ON CONFLICT DO NOTHING）
             for i in range(len(ids)):
                 for j in range(i + 1, len(ids)):
-                    s.add(ConceptEdge(
+                    stmt = pg_insert(ConceptEdge).values(
                         session_id=session_id, source_id=ids[i], target_id=ids[j],
                         origin="co_occurrence",
-                    ))
+                    ).on_conflict_do_nothing()
+                    await s.execute(stmt)
             await s.flush()
 
     # —— 埋点字段落盘 ——

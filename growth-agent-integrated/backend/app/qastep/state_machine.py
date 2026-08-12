@@ -140,7 +140,8 @@ class QAStepPipeline:
 
         # —— extracting：概念归一化 + 落盘 ——
         concepts_out: list[dict] = []
-        if concept_block is not None:
+        has_concepts = concept_block is not None and concept_block.concepts
+        if has_concepts:
             # 膨胀控制：超限降级为只标注已有概念（不新增）
             degraded = await self.repo.is_bloat_limit_reached(self.session_id)
             for item in concept_block.concepts:
@@ -157,6 +158,24 @@ class QAStepPipeline:
             # 建边（co_occurrence：同次抽取的概念互相连边）
             await self.repo.link_co_occurrence(self.qa_id, self.session_id, concepts_out)
             yield {"type": "concepts", "concepts": concepts_out}
+        else:
+            # L1 兜底：LLM 未按 sentinel 协议输出 ConceptBlock，
+            # 用 complete_text 二次抽取概念（L2 拆分模式）
+            fallback = await self._extract_concepts_fallback("".join(answer_buf))
+            if fallback:
+                degraded = await self.repo.is_bloat_limit_reached(self.session_id)
+                for item in fallback:
+                    if degraded:
+                        matched = await self.normalizer.match_existing_only(item["name"], self.session_id)
+                        if matched:
+                            concepts_out.append(matched)
+                    else:
+                        resolved = await self.normalizer.normalize(
+                            item, self.qa_id, self.session_id
+                        )
+                        concepts_out.append(resolved)
+                await self.repo.link_co_occurrence(self.qa_id, self.session_id, concepts_out)
+                yield {"type": "concepts", "concepts": concepts_out}
 
         # —— 层摘要：在概念列表之上生成"这层你理解了什么"，作树节点折叠预览 ——
         layer_summary = await self._gen_layer_summary("".join(answer_buf), concepts_out)
@@ -225,7 +244,49 @@ class QAStepPipeline:
             log.warning("layer summary failed: %s", e)
             return None
 
-    # —— 三个出口（均从 waiting 出发，由 API 路由调用）——
+    async def _extract_concepts_fallback(self, answer_text: str) -> list[dict] | None:
+        """L1 兜底：LLM 未按 sentinel 协议输出时，二次调 LLM 抽取概念。
+
+        返回 [{name, aliases[], confidence}] 或 None。
+        """
+        if not answer_text.strip():
+            return None
+        from app.inference.backend import default_backend
+        backend = getattr(self.inference, "backend", None)
+        if backend is None:
+            client = getattr(self.inference, "client", None)
+            backend = getattr(client, "backend", None) if client else None
+        if backend is None:
+            backend = default_backend()
+        if not hasattr(backend, "complete_text"):
+            return None
+        system = (
+            "从下面这段回答中抽取 3-8 个关键概念。用 JSON 数组返回，"
+            "每项 {name, aliases:[], confidence:0.0-1.0}。"
+            "name 用概念规范名(2-6字)，aliases 含中英文/缩写别名。只输出 JSON。"
+        )
+        user = f"问题：{self.question}\n回答：{answer_text[:1500]}"
+        try:
+            import json as _json, re
+            raw = await backend.complete_text(system, user, timeout=25.0)
+            # 去掉 markdown 代码块包裹
+            cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.IGNORECASE)
+            cleaned = re.sub(r"\s*```\s*$", "", cleaned).strip()
+            m = re.search(r"\[[\s\S]*\]", cleaned)
+            if not m:
+                log.warning("extract fallback: no JSON array found in LLM response")
+                return None
+            items = _json.loads(m.group(0))
+            from app.schemas import ConceptItem
+            return [
+                ConceptItem(name=it.get("name", ""), aliases=it.get("aliases", []),
+                            confidence=float(it.get("confidence", 0.7)))
+                for it in items if it.get("name")
+            ]
+        except Exception as e:
+            log.warning("extract fallback failed: %s", e)
+            return None
+
     async def drill_down(self, parent_qa_id: str, concept_id: str,
                          question: str | None = None) -> "QAStepPipeline":
         """出口1：点击概念下钻 → fork 新 QAStep，挂 parent_qa_id。"""

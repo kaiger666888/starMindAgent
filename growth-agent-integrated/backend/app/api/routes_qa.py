@@ -105,7 +105,16 @@ async def drilldown(qa_id: str, req: DriftDownRequest):
 
 @router.post("/{qa_id}/rollback")
 async def rollback(qa_id: str, req: RollbackRequest):
-    """出口2：回上层 → 栈式回退，状态保留（恢复 target 现场）。"""
+    """出口2：回上层 → 栈式回退，状态保留（恢复 target 现场）。
+
+    需求六"放弃探索"：回上层意味着当前 QAStep 未下钻，标记 browsed_not_drilled。
+    需求三"概念成熟度"：若该 QAStep 涉及概念 explore_count≥2 且未下钻，
+      标记 understood（前端入口变灰）。
+    """
+    # 标记当前 qa 为已浏览未下钻
+    await repo.mark_browsed_not_drilled(qa_id)
+    # 涉及概念成熟度判定
+    await repo.evaluate_concept_maturity(qa_id)
     ctx = await repo.restore_context(req.target_qa_id)
     return ctx
 
