@@ -3,11 +3,11 @@
 
 const BASE = ''  // 通过 vite proxy 转发到 :8000
 
-export async function startQA(question, sessionId, domainTag) {
+export async function startQA(question, sessionId, domainTag, userId) {
   const res = await fetch(`${BASE}/qa/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question, session_id: sessionId, domain_tag: domainTag }),
+    body: JSON.stringify({ question, session_id: sessionId, domain_tag: domainTag, user_id: userId }),
   })
   if (!res.ok) throw new Error(`start failed: ${res.status}`)
   return res.json()
@@ -85,5 +85,44 @@ export async function undoMerge(mergeId) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ merge_id: mergeId }),
   })
+  return res.json()
+}
+
+// —— 学习记忆 ——
+// startQA 已支持 user_id（后端 QAStartRequest.user_id），这里补传
+export async function startQAWithUser(question, userId, domainTag) {
+  const res = await fetch(`${BASE}/qa/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question, user_id: userId, domain_tag: domainTag }),
+  })
+  if (!res.ok) throw new Error(`start failed: ${res.status}`)
+  return res.json()
+}
+
+export async function listSessions(userId, limit = 50) {
+  const res = await fetch(`${BASE}/memory/users/${userId}/sessions?limit=${limit}`)
+  if (!res.ok) throw new Error(`list sessions failed: ${res.status}`)
+  return res.json()
+}
+
+export async function getSessionDetail(sessionId) {
+  const res = await fetch(`${BASE}/memory/sessions/${sessionId}`)
+  if (!res.ok) throw new Error(`session detail failed: ${res.status}`)
+  return res.json()
+}
+
+export async function getProfile(userId) {
+  const res = await fetch(`${BASE}/memory/users/${userId}/profile`)
+  if (!res.ok && res.status !== 404) throw new Error(`get profile failed: ${res.status}`)
+  return res.status === 404 ? null : res.json()
+}
+
+export async function refreshProfile(userId, force = false) {
+  const res = await fetch(
+    `${BASE}/memory/users/${userId}/profile/refresh?force=${force}`,
+    { method: 'POST' },
+  )
+  if (!res.ok) throw new Error(`refresh profile failed: ${res.status}`)
   return res.json()
 }

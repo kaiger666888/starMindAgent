@@ -19,7 +19,8 @@ export default function TreeView() {
   // 出口3：新问题 -> 开新探索树
   async function startNewTree() {
     if (!question.trim()) return
-    const qa = await api.startQA(question, null, null)
+    const uid = localStorage.getItem('starMindAgent.uid') || 'default'
+    const qa = await api.startQA(question, null, null, uid)
     setActiveSession(qa.session_id)
     pushLayer({ qa_id: qa.qa_id, question, answer: '', status: 'generating', concepts: [], loading: true })
     subscribe(qa.qa_id)
