@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import * as api from '../api/client'
 import {
-  useStore, pushLayer, updateLayer, popToLayer,
+  useStore, pushLayer, updateLayer, popToLayer, setLastViewed,
   clearInflight, guardAction, getState, setActiveSession,
 } from '../store/qaStore'
 
@@ -10,11 +10,19 @@ const TIER_COLOR = {
   gray: '#9ca3af', green: '#22c55e',
   red_1: '#fca5a5', red_2: '#f87171', red_3: '#ef4444', red_4: '#b91c1c',
 }
+const MAX_DEPTH = 6  // 膨胀控制硬上限
 
 export default function TreeView() {
   const stack = useStore((s) => s.stack)
   const inflight = useStore((s) => s.inflight)
   const [question, setQuestion] = useState('')
+
+  // 状态三导航：点灰色未探索概念 → 预填为问题
+  React.useEffect(() => {
+    const handler = (e) => setQuestion(e.detail)
+    window.addEventListener('starmind:prefillQuestion', handler)
+    return () => window.removeEventListener('starmind:prefillQuestion', handler)
+  }, [])
 
   // 出口3：新问题 -> 开新探索树
   async function startNewTree() {
@@ -22,18 +30,22 @@ export default function TreeView() {
     const uid = localStorage.getItem('starMindAgent.uid') || 'default'
     const qa = await api.startQA(question, null, null, uid)
     setActiveSession(qa.session_id)
-    pushLayer({ qa_id: qa.qa_id, question, answer: '', status: 'generating', concepts: [], loading: true })
+    pushLayer({ qa_id: qa.qa_id, question, answer: '', status: 'generating', concepts: [], layer_summary: '', loading: true })
     subscribe(qa.qa_id)
     setQuestion('')
   }
 
   // 出口1：点击概念下钻 -> fork 新 QAStep，挂 parent_qa_id
-  async function onDrillDown(parentQaId, conceptId, conceptName) {
+  async function onDrillDown(parentQaId, conceptId, conceptName, concept) {
     if (!guardAction(null)) return // 在途互斥
+    // 概念成熟度信号（需求三）：explore≥2 且 understood -> 入口变灰，不响应
+    if (concept?.understood) return
+    // 记录"上次在这里看的概念"（需求二节：回上层高亮探索断点）
+    setLastViewed(parentQaId, conceptId)
     const child = await api.drillDown(parentQaId, conceptId, conceptName)
     pushLayer({
       qa_id: child.qa_id, question: conceptName, answer: '',
-      status: 'generating', concepts: [], loading: true,
+      status: 'generating', concepts: [], layer_summary: '', loading: true,
     })
     api.incrementExplore(conceptId) // 热度 +1
     subscribe(child.qa_id)
@@ -48,12 +60,12 @@ export default function TreeView() {
   function subscribe(qaId) {
     api.subscribeStream(qaId, {
       answer_delta: (ev) => {
-        // 从 store 取最新 answer，避免闭包 stale
         const cur = getState().stack.find((l) => l.qa_id === qaId)
         updateLayer(qaId, { answer: (cur?.answer || '') + ev.text })
       },
       status: (ev) => updateLayer(qaId, { status: ev.status }),
       concepts: (ev) => updateLayer(qaId, { concepts: ev.concepts }),
+      layer_summary: (ev) => updateLayer(qaId, { layer_summary: ev.layer_summary }),
       done: () => { updateLayer(qaId, { loading: false }); clearInflight() },
       error: () => { updateLayer(qaId, { loading: false }); clearInflight() },
     })
@@ -74,47 +86,91 @@ export default function TreeView() {
         </button>
       </div>
 
+      {stack.length === 0 && (
+        <div style={styles.empty}>输入一个问题，开始你的概念探索之旅。</div>
+      )}
+
       <nav style={styles.tree}>
-        {stack.map((layer, idx) => (
-          <div key={layer.qa_id} style={{
-            ...styles.layer,
-            borderLeft: idx === stack.length - 1 ? '3px solid #2563eb' : '3px solid transparent',
-          }}>
-            <div style={styles.layerHead}>
-              <span style={styles.depth}>L{idx + 1}</span>
-              <span style={styles.q}>{layer.question}</span>
-              {layer.loading && <span style={styles.loading}>●</span>}
-            </div>
-
-            {layer.answer && (
-              <div style={styles.answer}>{layer.answer}</div>
-            )}
-
-            {layer.concepts?.length > 0 && (
-              <div style={styles.concepts}>
-                {layer.concepts.map((c) => (
-                  <button
-                    key={c.concept_id}
-                    style={{ ...styles.chip, background: TIER_COLOR.gray }}
-                    onClick={() => onDrillDown(layer.qa_id, c.concept_id, c.canonical_name || c.name)}
-                    disabled={!!inflight && inflight !== layer.qa_id}
-                  >
-                    {c.canonical_name || c.name}
-                  </button>
-                ))}
+        {stack.map((layer, idx) => {
+          const isCurrent = idx === stack.length - 1
+          const nearDepthLimit = layer.depth >= MAX_DEPTH - 1
+          return (
+            <div key={layer.qa_id} style={{
+              ...styles.layer,
+              borderLeft: isCurrent ? '3px solid #2563eb' : '3px solid transparent',
+            }}>
+              <div style={styles.layerHead}>
+                <span style={styles.depth}>L{idx + 1}</span>
+                <span style={styles.q}>{layer.question}</span>
+                {layer.loading && <span style={styles.loading}>●</span>}
               </div>
-            )}
 
-            {idx < stack.length - 1 && (
-              <button style={styles.rollback} onClick={() => onRollback(layer.qa_id)}>
-                ↑ 回到这层
-              </button>
-            )}
-          </div>
-        ))}
+              {/* 层摘要折叠预览（需求二节"总结一层"） */}
+              {layer.layer_summary && (
+                <div style={styles.layerSummary}>{layer.layer_summary}</div>
+              )}
+
+              {layer.answer && (
+                <div style={styles.answer}>{layer.answer}</div>
+              )}
+
+              {layer.concepts?.length > 0 ? (
+                <div style={styles.concepts}>
+                  {layer.concepts.map((c) => {
+                    const tier = tierForCount(c.explore_count || 0)
+                    const understood = c.understood || (c.explore_count >= 2)
+                    const isLastViewed = layer.last_viewed_concept === c.concept_id
+                    return (
+                      <button
+                        key={c.concept_id}
+                        style={{
+                          ...styles.chip,
+                          background: understood ? '#e5e7eb' : TIER_COLOR[tier],
+                          opacity: understood ? 0.5 : 1,
+                          cursor: understood ? 'not-allowed' : 'pointer',
+                          boxShadow: isLastViewed ? '0 0 0 2px #f59e0b' : 'none',
+                        }}
+                        title={understood ? '已理解（探索≥2次未下钻）' : (isLastViewed ? '你上次在这里看的概念' : '点击下钻')}
+                        onClick={() => onDrillDown(layer.qa_id, c.concept_id, c.canonical_name || c.name, c)}
+                        disabled={!!inflight && inflight !== layer.qa_id}
+                      >
+                        {c.canonical_name || c.name}
+                        {isLastViewed && ' ←'}
+                      </button>
+                    )
+                  })}
+                </div>
+              ) : (
+                layer.status === 'waiting' && (
+                  <div style={styles.noConcepts}>本轮未抽取到概念</div>
+                )
+              )}
+
+              {/* 深度上限提示（需求三节） */}
+              {nearDepthLimit && isCurrent && (
+                <div style={styles.depthWarn}>⚠ 即将到达探索深度上限（L{MAX_DEPTH}）</div>
+              )}
+
+              {idx < stack.length - 1 && (
+                <button style={styles.rollback} onClick={() => onRollback(layer.qa_id)}>
+                  ↑ 回到这层
+                </button>
+              )}
+            </div>
+          )
+        })}
       </nav>
     </aside>
   )
+}
+
+function tierForCount(c) {
+  if (c <= 0) return 'gray'
+  if (c === 1) return 'green'
+  if (c < 2) return 'red_1'
+  if (c < 4) return 'red_2'
+  if (c < 8) return 'red_3'
+  return 'red_4'
 }
 
 const styles = {
@@ -123,13 +179,21 @@ const styles = {
   input: { flex: 1, padding: '6px 8px', border: '1px solid #d1d5db', borderRadius: 6 },
   btn: { padding: '6px 12px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer' },
   tree: { display: 'flex', flexDirection: 'column', gap: 8 },
+  empty: { fontSize: 13, color: '#9ca3af', padding: '24px 8px', textAlign: 'center', lineHeight: 1.6 },
   layer: { paddingLeft: 8, paddingBottom: 8 },
   layerHead: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 },
   depth: { background: '#e0e7ff', color: '#3730a3', borderRadius: 4, padding: '0 4px', fontSize: 11 },
   q: { fontWeight: 600 },
   loading: { color: '#f59e0b', animation: 'blink 1s infinite' },
+  layerSummary: {
+    fontSize: 12, color: '#6b7280', fontStyle: 'italic',
+    margin: '4px 0', padding: '4px 8px', background: '#f9fafb',
+    borderRadius: 4, borderLeft: '2px solid #d1d5db',
+  },
   answer: { fontSize: 13, color: '#374151', margin: '4px 0', lineHeight: 1.5, whiteSpace: 'pre-wrap' },
   concepts: { display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 },
   chip: { border: '1px solid #e5e7eb', borderRadius: 12, padding: '2px 8px', fontSize: 12, cursor: 'pointer', color: '#fff' },
+  noConcepts: { fontSize: 11, color: '#9ca3af', marginTop: 4, fontStyle: 'italic' },
+  depthWarn: { fontSize: 11, color: '#dc2626', marginTop: 4, padding: '4px 8px', background: '#fef2f2', borderRadius: 4 },
   rollback: { marginTop: 4, fontSize: 12, color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer', padding: 0 },
 }

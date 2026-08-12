@@ -88,6 +88,36 @@ export async function undoMerge(mergeId) {
   return res.json()
 }
 
+// —— 概念图增强 ——
+export async function getGlobalGraph(userId) {
+  const url = userId ? `${BASE}/concept/global?user_id=${userId}` : `${BASE}/concept/global`
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`global graph failed: ${res.status}`)
+  return res.json()
+}
+
+export async function extendDomainGraph(sessionId, hops = 1) {
+  const res = await fetch(`${BASE}/concept/extend?session_id=${sessionId}&hops=${hops}`, { method: 'POST' })
+  if (!res.ok) throw new Error(`extend graph failed: ${res.status}`)
+  return res.json()
+}
+
+export async function getConceptHistory(conceptId) {
+  const res = await fetch(`${BASE}/concept/${conceptId}/history`)
+  if (!res.ok) throw new Error(`history failed: ${res.status}`)
+  return res.json()
+}
+
+export async function correctAnnotation(qaId, conceptId, action) {
+  const res = await fetch(`${BASE}/concept/correct`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ qa_id: qaId, concept_id: conceptId, action }),
+  })
+  if (!res.ok) throw new Error(`correct failed: ${res.status}`)
+  return res.json()
+}
+
 // —— 学习记忆 ——
 // startQA 已支持 user_id（后端 QAStartRequest.user_id），这里补传
 export async function startQAWithUser(question, userId, domainTag) {

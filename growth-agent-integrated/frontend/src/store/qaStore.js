@@ -41,6 +41,14 @@ export function updateLayer(qaId, patch) {
     stack: state.stack.map((l) => (l.qa_id === qaId ? { ...l, ...patch } : l)),
   })
 }
+// 记录回上层时"上次看的概念"——高亮提示探索断点（需求二节）
+export function setLastViewed(qaId, conceptId) {
+  set({
+    stack: state.stack.map((l) =>
+      l.qa_id === qaId ? { ...l, last_viewed_concept: conceptId } : l
+    ),
+  })
+}
 export function popToLayer(qaId) {
   // 出口2：栈式回退到指定层，保留该层及以下（状态保留）
   const idx = state.stack.findIndex((l) => l.qa_id === qaId)

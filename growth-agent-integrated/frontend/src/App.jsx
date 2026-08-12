@@ -1,14 +1,24 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import TreeView from './components/TreeView'
 import ConceptGraph from './components/ConceptGraph'
 import MemoryView from './components/MemoryView'
 import { useStore } from './store/qaStore'
-import * as api from './api/client'
 
 export default function App() {
   const stack = useStore((s) => s.stack)
   const inflight = useStore((s) => s.inflight)
   const [view, setView] = useState('explore') // explore | memory
+
+  // 概念图状态三导航：点灰色未探索概念 → 切到探索视图并预填问题
+  useEffect(() => {
+    const handler = (e) => {
+      setView('explore')
+      // 通过自定义事件传给 TreeView（TreeView 监听 window 预填）
+      window.dispatchEvent(new CustomEvent('starmind:prefillQuestion', { detail: e.detail }))
+    }
+    window.addEventListener('starmind:startFromConcept', handler)
+    return () => window.removeEventListener('starmind:startFromConcept', handler)
+  }, [])
 
   return (
     <div style={styles.app}>
