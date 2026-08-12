@@ -37,25 +37,70 @@ class LLMJudge(Protocol):
 
 
 class MockEmbedder:
-    """本地开发桩：用规范名编辑距离近似，真实环境替换为向量召回。"""
+    """本地开发桩：用规范名+别名编辑距离综合近似，真实环境可替换为向量召回。
+
+    网关无 /embeddings 接口时用此规则版召回（别名包含优先，编辑距离次之）。
+    """
     async def embed(self, text: str) -> list[float]:
-        return [float(len(text))]
+        # 把 query 文本塞进 vec[1]，recall 用它做文本相似度
+        return [float(len(text)), text]
 
     async def recall(self, vec: list[float], session_id: str, topk: int) -> list[tuple[str, float]]:
+        from app.concept.normalization import _text_similarity
         async with session_scope() as s:
             rows = (
                 await s.execute(
-                    select(ConceptNode.concept_id, ConceptNode.canonical_name)
-                    .where(ConceptNode.source != "preset")  # 桩：召回已存在的
-                    .order_by(ConceptNode.canonical_name).limit(topk * 4)
+                    select(ConceptNode.concept_id, ConceptNode.canonical_name, ConceptNode.aliases)
+                    .order_by(ConceptNode.canonical_name).limit(topk * 8)
                 )
             ).all()
         out = []
         for r in rows:
-            score = 1.0 - abs(len(r.canonical_name) - vec[0]) / max(vec[0], 1.0)
-            out.append((r.concept_id, round(max(0.0, score), 4)))
+            score = _text_similarity(vec[1] if len(vec) > 1 else "", r.canonical_name, r.aliases or [])
+            if score > 0.3:  # 下界过滤
+                out.append((r.concept_id, round(score, 4)))
         out.sort(key=lambda x: x[1], reverse=True)
         return out[:topk]
+
+
+def _text_similarity(query: str, canonical: str, aliases: list) -> float:
+    """文本相似度：别名精确包含(1.0) > 子串包含(0.9) > 编辑距离比(0-0.8)。"""
+    if not query:
+        return 0.0
+    q = query.lower().strip()
+    c = canonical.lower().strip()
+    if q == c:
+        return 1.0
+    # 别名精确匹配
+    for a in aliases:
+        if q == a.lower().strip():
+            return 1.0
+    # 子串包含
+    if q in c or c in q:
+        return 0.9
+    for a in aliases:
+        a_low = a.lower().strip()
+        if q in a_low or a_low in q:
+            return 0.9
+    # 编辑距离比（Levenshtein）
+    dist = _levenshtein(q, c)
+    max_len = max(len(q), len(c), 1)
+    sim = 1.0 - dist / max_len
+    return min(0.8, sim)
+
+
+def _levenshtein(a: str, b: str) -> int:
+    if not a:
+        return len(b)
+    if not b:
+        return len(a)
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (0 if ca == cb else 1)))
+        prev = cur
+    return prev[-1]
 
 
 class MockLLMJudge:
@@ -63,6 +108,44 @@ class MockLLMJudge:
         # 桩：相似度越高越倾向合并
         merge = similarity >= 0.85
         return merge, f"mock judge sim={similarity:.3f}"
+
+
+class LLMJudge:
+    """真实灰区判定：用 LLM complete_text 让模型判定两个概念是否同义。
+
+    LLM 不可用时退化为 MockLLMJudge（基于相似度阈值）。
+    """
+    def __init__(self):
+        self._fallback = MockLLMJudge()
+        self._cache = {}  # (name, canonical) -> (merge, reason)
+
+    async def judge(self, candidate_name, candidate_canonical, matched_alias, similarity):
+        from app.inference.backend import default_backend
+        backend = default_backend()
+        if not hasattr(backend, "complete_text"):
+            return await self._fallback.judge(candidate_name, candidate_canonical, matched_alias, similarity)
+        cache_key = (candidate_name, candidate_canonical)
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+        system = (
+            "你是概念归一化判定助手。判断两个概念名是否指同一概念（同义词/中英文/缩写）。"
+            "只输出 JSON: {\"merge\": true/false, \"reason\": \"一句话\"}。"
+        )
+        user = (f"候选概念: {candidate_name}\n已存在规范名: {candidate_canonical}"
+                f"\n匹配别名: {matched_alias or '无'}\n相似度: {similarity:.3f}"
+                f"\n是否合并为同一概念？")
+        try:
+            import json as _json, re
+            raw = await backend.complete_text(system, user, timeout=15.0)
+            m = re.search(r"\{[\s\S]*\}", raw)
+            if not m:
+                return await self._fallback.judge(candidate_name, candidate_canonical, matched_alias, similarity)
+            d = _json.loads(m.group(0))
+            result = (bool(d.get("merge", False)), str(d.get("reason", "")))
+            self._cache[cache_key] = result
+            return result
+        except Exception:
+            return await self._fallback.judge(candidate_name, candidate_canonical, matched_alias, similarity)
 
 
 class ConceptNormalizer:
@@ -205,4 +288,4 @@ class ConceptNormalizer:
         }
 
 
-normalizer = ConceptNormalizer()
+normalizer = ConceptNormalizer(embedder=MockEmbedder(), judge=LLMJudge())

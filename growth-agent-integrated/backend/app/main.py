@@ -28,6 +28,14 @@ async def lifespan(app: FastAPI):
         log.info("harness backfill worker started")
     # 兼容旧 backfill_queue（主仓 tasks.py）
     backfill_queue.start_worker(backfill_processor)
+    # 启动：seed 预置核心概念（需求五"预置+LLM补充"）
+    try:
+        from app.concept import concept_service
+        cnt = await concept_service.seed_preset_concepts()
+        if cnt:
+            log.info("seeded %d preset concepts", cnt)
+    except Exception as e:
+        log.warning("seed preset failed: %s", e)
     yield
     # 关闭：优雅停机
     if h.pool:

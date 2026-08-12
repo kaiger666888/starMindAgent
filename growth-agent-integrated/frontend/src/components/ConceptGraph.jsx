@@ -37,6 +37,54 @@ export default function ConceptGraph() {
   const [scope, setScope] = useState('session')    // session | global
   const [extensions, setExtensions] = useState(null)
   const [loadingExt, setLoadingExt] = useState(false)
+  const [search, setSearch] = useState('')         // 概念搜索（需求六"检索已有概念"）
+  const [selectedForMerge, setSelectedForMerge] = useState([])  // 手动合并多选（需求六）
+
+  // 概念搜索：命中后高亮+居中（需求六"检索已有概念"）
+  function onSearch(q) {
+    setSearch(q)
+    if (!cyRef.current || !q.trim()) {
+      cyRef.current?.elements().removeClass('dimmed')
+      return
+    }
+    const query = q.toLowerCase().trim()
+    cyRef.current.elements().removeClass('dimmed')
+    cyRef.current.nodes().filter((n) => {
+      const label = (n.data('label') || '').toLowerCase()
+      const aliases = n.data('aliases') || []
+      return !label.includes(query) && !aliases.some((a) => a.toLowerCase().includes(query))
+    }).addClass('dimmed')
+    // 命中节点居中
+    const hits = cyRef.current.nodes().filter((n) => {
+      const label = (n.data('label') || '').toLowerCase()
+      const aliases = n.data('aliases') || []
+      return label.includes(query) || aliases.some((a) => a.toLowerCase().includes(query))
+    })
+    if (hits.length) {
+      cyRef.current.animate({ center: { eles: hits.first(), zoom: 1.2 } }, { duration: 300 })
+      hits.first().select()
+    }
+  }
+
+  // 手动合并（需求六"手动合并概念"）：两概念合并为同一节点，走后端 audit log
+  async function onMerge() {
+    if (selectedForMerge.length !== 2) return
+    const [a, b] = selectedForMerge
+    if (!window.confirm(`合并这两个概念？合并 b 入 a，可通过 audit log 撤销。`)) return
+    try {
+      await api.mergeConcepts(a, b)
+      setSelectedForMerge([])
+      cyRef.current?.nodes().removeClass('merge-candidate')
+      await loadGraph()
+    } catch (e) {
+      alert(`合并失败: ${e.message}`)
+    }
+  }
+
+  function clearMergeSelection() {
+    setSelectedForMerge([])
+    cyRef.current?.nodes().removeClass('merge-candidate')
+  }
 
   // 图数据：session 用 getGraph，global 用 getGlobalGraph
   async function loadGraph() {
@@ -109,6 +157,8 @@ export default function ConceptGraph() {
           'target-arrow-shape': 'triangle', 'target-arrow-color': '#cbd5e1',
         }},
         { selector: 'node:selected', style: { 'border-width': 3, 'border-color': '#f59e0b' } },
+        { selector: 'node.dimmed', style: { opacity: 0.2 } },
+        { selector: 'node.merge-candidate', style: { 'border-width': 4, 'border-color': '#dc2626', 'border-style': 'dashed' } },
       ],
       layout: { name: 'cose', animate: true, animateFilter: () => false,
         nodeRepulsion: () => 8000, idealEdgeLength: () => 90 },
@@ -117,6 +167,20 @@ export default function ConceptGraph() {
       const n = evt.target
       const qaId = n.data('qa_id')
       const isExt = n.data('is_extension')
+      // Shift+点击：手动合并多选（需求六"手动合并概念"）
+      if (evt.originalEvent.shiftKey) {
+        const id = n.id()
+        setSelectedForMerge((prev) => {
+          if (prev.includes(id)) {
+            n.removeClass('merge-candidate')
+            return prev.filter((x) => x !== id)
+          }
+          if (prev.length >= 2) return prev  // 只选2个
+          n.addClass('merge-candidate')
+          return [...prev, id]
+        })
+        return
+      }
       if (isExt) {
         // 状态三导航入口：点灰色未探索概念 → 以该概念名开新问题
         const name = n.data('label')
@@ -142,6 +206,7 @@ export default function ConceptGraph() {
         id: n.concept_id, label: n.canonical_name,
         explore_count: n.explore_count || 0,
         understood: n.understood || false,
+        aliases: n.aliases || [],
       },
       style: {
         'background-color': n.understood ? '#e5e7eb' : TIER_FILL[tierForCount(n.explore_count || 0)],
@@ -172,6 +237,12 @@ export default function ConceptGraph() {
             </button>
           ))}
         </div>
+        <input
+          style={styles.search}
+          value={search}
+          onChange={(e) => onSearch(e.target.value)}
+          placeholder="搜索已探索概念…"
+        />
         <div style={styles.scopeSwitch}>
           <button
             style={{ ...styles.scopeBtn, ...(scope === 'session' ? styles.scopeBtnActive : {}) }}
@@ -184,7 +255,19 @@ export default function ConceptGraph() {
           >全局</button>
         </div>
       </div>
-      <div style={styles.viewDesc}>{currentViewObj?.desc}</div>
+      <div style={styles.viewDesc}>
+        {currentViewObj?.desc}
+        <span style={{ marginLeft: 12, color: '#9ca3af' }}>Shift+点击两个概念节点可手动合并</span>
+      </div>
+      {selectedForMerge.length > 0 && (
+        <div style={styles.mergeBar}>
+          已选 {selectedForMerge.length}/2 个概念
+          {selectedForMerge.length === 2 && (
+            <button style={styles.mergeBtn} onClick={onMerge}>合并</button>
+          )}
+          <button style={styles.clearBtn} onClick={clearMergeSelection}>取消</button>
+        </div>
+      )}
       <div style={styles.legend}>
         <span style={styles.legendItem}><i style={{ ...styles.dot, background: TIER_FILL.gray }} />未探索</span>
         <span style={styles.legendItem}><i style={{ ...styles.dot, background: TIER_FILL.green }} />探索1次</span>
@@ -203,6 +286,7 @@ const styles = {
   viewSwitch: { display: 'flex', gap: 4 },
   viewBtn: { padding: '4px 10px', fontSize: 12, background: '#f3f4f6', color: '#6b7280', border: '1px solid #e5e7eb', borderRadius: 4, cursor: 'pointer' },
   viewBtnActive: { background: '#2563eb', color: '#fff', borderColor: '#2563eb' },
+  search: { padding: '4px 8px', fontSize: 12, border: '1px solid #d1d5db', borderRadius: 4, width: 140 },
   scopeSwitch: { display: 'flex', gap: 2, background: '#f9fafb', borderRadius: 4, padding: 2 },
   scopeBtn: { padding: '3px 8px', fontSize: 11, background: 'transparent', color: '#6b7280', border: 'none', borderRadius: 3, cursor: 'pointer' },
   scopeBtnActive: { background: '#fff', color: '#1f2937', boxShadow: '0 1px 2px rgba(0,0,0,0.1)' },
@@ -212,4 +296,7 @@ const styles = {
   dot: { width: 10, height: 10, borderRadius: '50%', display: 'inline-block' },
   canvas: { flex: 1, minHeight: 300, background: '#fff' },
   loading: { position: 'absolute', top: 80, right: 20, padding: '4px 10px', background: '#fff', border: '1px solid #e5e7eb', borderRadius: 4, fontSize: 12, color: '#6b7280' },
+  mergeBar: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', background: '#fef2f2', borderBottom: '1px solid #fecaca', fontSize: 12, color: '#991b1b' },
+  mergeBtn: { padding: '3px 10px', fontSize: 12, background: '#dc2626', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' },
+  clearBtn: { padding: '3px 10px', fontSize: 12, background: 'transparent', color: '#991b1b', border: '1px solid #fecaca', borderRadius: 4, cursor: 'pointer' },
 }

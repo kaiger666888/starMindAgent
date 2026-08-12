@@ -56,6 +56,31 @@ export default function TreeView() {
     popToLayer(targetQaId)
   }
 
+  // 手动纠标注（需求六"手动纠标注入口"）
+  async function onCorrect(qaId, conceptId, action) {
+    try {
+      await api.correctAnnotation(qaId, conceptId, action)
+      // 本地更新：add/remove 概念列表
+      if (action === 'remove') {
+        updateLayer(qaId, {
+          concepts: getState().stack.find((l) => l.qa_id === qaId)?.concepts
+            ?.filter((c) => c.concept_id !== conceptId) || []
+        })
+      } else {
+        // add: 用户输入概念名（简单实现，实际可弹选择器）
+        const name = window.prompt('输入要补抽的概念名：')
+        if (!name) return
+        // 补抽的概念无 concept_id（新建），本地加占位
+        const concepts = getState().stack.find((l) => l.qa_id === qaId)?.concepts || []
+        updateLayer(qaId, {
+          concepts: [...concepts, { canonical_name: name, concept_id: `local_${Date.now()}`, confidence: 1.0 }]
+        })
+      }
+    } catch (e) {
+      alert(`纠标注失败: ${e.message}`)
+    }
+  }
+
   // SSE 流式订阅
   function subscribe(qaId) {
     api.subscribeStream(qaId, {
@@ -121,24 +146,38 @@ export default function TreeView() {
                     const understood = c.understood || (c.explore_count >= 2)
                     const isLastViewed = layer.last_viewed_concept === c.concept_id
                     return (
-                      <button
-                        key={c.concept_id}
-                        style={{
-                          ...styles.chip,
-                          background: understood ? '#e5e7eb' : TIER_COLOR[tier],
-                          opacity: understood ? 0.5 : 1,
-                          cursor: understood ? 'not-allowed' : 'pointer',
-                          boxShadow: isLastViewed ? '0 0 0 2px #f59e0b' : 'none',
-                        }}
-                        title={understood ? '已理解（探索≥2次未下钻）' : (isLastViewed ? '你上次在这里看的概念' : '点击下钻')}
-                        onClick={() => onDrillDown(layer.qa_id, c.concept_id, c.canonical_name || c.name, c)}
-                        disabled={!!inflight && inflight !== layer.qa_id}
-                      >
-                        {c.canonical_name || c.name}
-                        {isLastViewed && ' ←'}
-                      </button>
+                      <span key={c.concept_id} style={styles.chipWrap}>
+                        <button
+                          style={{
+                            ...styles.chip,
+                            background: understood ? '#e5e7eb' : TIER_COLOR[tier],
+                            opacity: understood ? 0.5 : 1,
+                            cursor: understood ? 'not-allowed' : 'pointer',
+                            boxShadow: isLastViewed ? '0 0 0 2px #f59e0b' : 'none',
+                          }}
+                          title={understood ? '已理解（探索≥2次未下钻）' : (isLastViewed ? '你上次在这里看的概念' : '点击下钻')}
+                          onClick={() => onDrillDown(layer.qa_id, c.concept_id, c.canonical_name || c.name, c)}
+                          disabled={!!inflight && inflight !== layer.qa_id}
+                        >
+                          {c.canonical_name || c.name}
+                          {isLastViewed && ' ←'}
+                        </button>
+                        {/* 纠标注：删除误抽（需求六） */}
+                        <button
+                          style={styles.chipDel}
+                          title="删除误抽的概念"
+                          onClick={() => onCorrect(layer.qa_id, c.concept_id, 'remove')}
+                          disabled={!!inflight && inflight !== layer.qa_id}
+                        >×</button>
+                      </span>
                     )
                   })}
+                  {/* 纠标注：补抽漏抽（需求六） */}
+                  <button
+                    style={styles.chipAdd}
+                    onClick={() => onCorrect(layer.qa_id, null, 'add')}
+                    disabled={!!inflight && inflight !== layer.qa_id}
+                  >+ 补抽</button>
                 </div>
               ) : (
                 layer.status === 'waiting' && (
@@ -192,7 +231,10 @@ const styles = {
   },
   answer: { fontSize: 13, color: '#374151', margin: '4px 0', lineHeight: 1.5, whiteSpace: 'pre-wrap' },
   concepts: { display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 },
+  chipWrap: { display: 'inline-flex', alignItems: 'center', position: 'relative' },
   chip: { border: '1px solid #e5e7eb', borderRadius: 12, padding: '2px 8px', fontSize: 12, cursor: 'pointer', color: '#fff' },
+  chipDel: { position: 'absolute', right: -2, top: -4, width: 16, height: 16, borderRadius: '50%', background: '#ef4444', color: '#fff', border: '1px solid #fff', fontSize: 11, cursor: 'pointer', padding: 0, lineHeight: '14px', textAlign: 'center' },
+  chipAdd: { border: '1px dashed #9ca3af', borderRadius: 12, padding: '2px 8px', fontSize: 12, cursor: 'pointer', background: 'transparent', color: '#6b7280' },
   noConcepts: { fontSize: 11, color: '#9ca3af', marginTop: 4, fontStyle: 'italic' },
   depthWarn: { fontSize: 11, color: '#dc2626', marginTop: 4, padding: '4px 8px', background: '#fef2f2', borderRadius: 4 },
   rollback: { marginTop: 4, fontSize: 12, color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer', padding: 0 },

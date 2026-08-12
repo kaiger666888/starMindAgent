@@ -14,6 +14,7 @@ import logging
 from typing import Optional
 
 from sqlalchemy import select, update, func, delete
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.db import session_scope
 from app.models.tables import ConceptNode, ConceptEdge, AuditLog, QASession, QAStep
@@ -302,14 +303,46 @@ class ConceptService:
             )
             row = res.one()
             cnt = row[0]
-        return {
-            "concept_id": concept_id,
-            "explore_count": cnt,
-            "drill_down_count": row[1],
-            "visit_count": row[2],
-            "color_tier": _color_tier(cnt),
-            "dominant_signal": "drill" if row[1] >= row[2] else "visit",
-        }
+            return {
+                "concept_id": concept_id,
+                "explore_count": cnt,
+                "drill_down_count": row[1],
+                "visit_count": row[2],
+                "color_tier": _color_tier(cnt),
+                "dominant_signal": "drill" if row[1] >= row[2] else "visit",
+            }
+
+    async def seed_preset_concepts(self) -> int:
+        """需求五"预置核心概念+LLM补充扩展"：启动时 seed 预置种子进 concept_node。
+
+        source=preset，幂等（canonical_name 已存在则跳过）。
+        LLM 抽取时先经归一化匹配预置概念，未命中才新建（normalize 已含此逻辑）。
+        返回新增种子数。
+        """
+        import json as _json, os
+        preset_path = os.path.join(os.path.dirname(__file__), "preset_concepts.json")
+        if not os.path.exists(preset_path):
+            return 0
+        with open(preset_path, encoding="utf-8") as f:
+            data = _json.load(f)
+        inserted = 0
+        async with session_scope() as s:
+            for domain, items in data.get("domains", {}).items():
+                for item in items:
+                    # 幂等：canonical_name 已存在则跳过
+                    stmt = pg_insert(ConceptNode).values(
+                        canonical_name=item["canonical_name"],
+                        aliases=item.get("aliases", []),
+                        domain_tag=domain,
+                        source="preset",
+                    ).on_conflict_do_nothing(
+                        index_elements=[ConceptNode.canonical_name]
+                    )
+                    res = await s.execute(stmt)
+                    if res.rowcount > 0:
+                        inserted += 1
+        log.info("seeded %d preset concepts", inserted)
+        return inserted
 
 
 def _color_tier(cnt: int) -> str:

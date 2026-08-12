@@ -1,0 +1,80 @@
+{
+  "_comment": "预置核心概念种子（需求五：预置+LLM补充扩展，两者结合）。source=preset，启动时 seed 进 concept_node。通用多领域，LLM 抽取时先匹配预置再新建。",
+  "domains": {
+    "machine_learning": [
+      {"canonical_name": "梯度下降", "aliases": ["Gradient Descent", "GD", "梯度下降法"]},
+      {"canonical_name": "神经网络", "aliases": ["Neural Network", "NN", "人工神经网络"]},
+      {"canonical_name": "反向传播", "aliases": ["Backpropagation", "BP", "反向传播算法"]},
+      {"canonical_name": "损失函数", "aliases": ["Loss Function", "代价函数", "Cost Function"]},
+      {"canonical_name": "学习率", "aliases": ["Learning Rate", "lr"]},
+      {"canonical_name": "过拟合", "aliases": ["Overfitting", "过学习"]},
+      {"canonical_name": "正则化", "aliases": ["Regularization"]},
+      {"canonical_name": "卷积神经网络", "aliases": ["CNN", "Convolutional Neural Network"]},
+      {"canonical_name": "循环神经网络", "aliases": ["RNN", "Recurrent Neural Network"]},
+      {"canonical_name": "注意力机制", "aliases": ["Attention", "Attention Mechanism", "自注意力"]},
+      {"canonical_name": "Transformer", "aliases": ["transformer", "变换器"]},
+      {"canonical_name": "监督学习", "aliases": ["Supervised Learning"]},
+      {"canonical_name": "无监督学习", "aliases": ["Unsupervised Learning"]},
+      {"canonical_name": "强化学习", "aliases": ["Reinforcement Learning", "RL"]},
+      {"canonical_name": "梯度", "aliases": ["Gradient"]},
+      {"canonical_name": "优化算法", "aliases": ["Optimization Algorithm", "Optimizer", "优化器"]},
+      {"canonical_name": "激活函数", "aliases": ["Activation Function"]},
+      {"canonical_name": "批归一化", "aliases": ["Batch Normalization", "BatchNorm"]},
+      {"canonical_name": "dropout", "aliases": ["Dropout", "丢弃"]}
+    ],
+    "computer_network": [
+      {"canonical_name": "TCP", "aliases": ["Transmission Control Protocol", "传输控制协议"]},
+      {"canonical_name": "UDP", "aliases": ["User Datagram Protocol", "用户数据报协议"]},
+      {"canonical_name": "IP地址", "aliases": ["IP Address", "IP"]},
+      {"canonical_name": "DNS", "aliases": ["Domain Name System", "域名系统"]},
+      {"canonical_name": "HTTP", "aliases": ["HyperText Transfer Protocol", "超文本传输协议"]},
+      {"canonical_name": "HTTPS", "aliases": ["HTTP Secure", "HTTP over TLS"]},
+      {"canonical_name": "路由", "aliases": ["Routing", "路由选择"]},
+      {"canonical_name": "负载均衡", "aliases": ["Load Balancing", "负载平衡"]},
+      {"canonical_name": "套接字", "aliases": ["Socket", "套接字接口"]},
+      {"canonical_name": "三次握手", "aliases": ["Three-way Handshake", "TCP握手"]},
+      {"canonical_name": "拥塞控制", "aliases": ["Congestion Control"]},
+      {"canonical_name": "NAT", "aliases": ["Network Address Translation", "网络地址转换"]}
+    ],
+    "database": [
+      {"canonical_name": "事务", "aliases": ["Transaction", "数据库事务"]},
+      {"canonical_name": "索引", "aliases": ["Index", "数据库索引"]},
+      {"canonical_name": "ACID", "aliases": ["acid", "原子性一致性隔离性持久性"]},
+      {"canonical_name": "B树", "aliases": ["B-Tree", "B树索引"]},
+      {"canonical_name": "B+树", "aliases": ["B+ Tree", "B+Tree"]},
+      {"canonical_name": "锁", "aliases": ["Lock", "数据库锁"]},
+      {"canonical_name": "MVCC", "aliases": ["Multi-Version Concurrency Control", "多版本并发控制"]},
+      {"canonical_name": "主键", "aliases": ["Primary Key", "PK"]},
+      {"canonical_name": "外键", "aliases": ["Foreign Key", "FK"]},
+      {"canonical_name": "范式", "aliases": ["Normal Form", "数据库范式", "Normalization"]},
+      {"canonical_name": "分库分表", "aliases": ["Sharding", "数据库分片"]},
+      {"canonical_name": "主从复制", "aliases": ["Replication", "Master-Slave Replication"]}
+    ],
+    "distributed_systems": [
+      {"canonical_name": "一致性", "aliases": ["Consistency", "数据一致性"]},
+      {"canonical_name": "CAP定理", "aliases": ["CAP Theorem", "CAP"]},
+      {"canonical_name": "分布式锁", "aliases": ["Distributed Lock"]},
+      {"canonical_name": "Raft", "aliases": ["raft", "Raft算法"]},
+      {"canonical_name": "Paxos", "aliases": ["paxos", "Paxos算法"]},
+      {"canonical_name": "消息队列", "aliases": ["Message Queue", "MQ"]},
+      {"canonical_name": "负载均衡", "aliases": ["Load Balancing"]},
+      {"canonical_name": "微服务", "aliases": ["Microservices", "Microservice"]},
+      {"canonical_name": "服务发现", "aliases": ["Service Discovery"]},
+      {"canonical_name": "熔断器", "aliases": ["Circuit Breaker"]},
+      {"canonical_name": "幂等性", "aliases": ["Idempotency", "幂等"]}
+    ],
+    "operating_system": [
+      {"canonical_name": "进程", "aliases": ["Process", "进程管理"]},
+      {"canonical_name": "线程", "aliases": ["Thread", "线程管理"]},
+      {"canonical_name": "调度", "aliases": ["Scheduling", "进程调度"]},
+      {"canonical_name": "死锁", "aliases": ["Deadlock"]},
+      {"canonical_name": "内存管理", "aliases": ["Memory Management"]},
+      {"canonical_name": "虚拟内存", "aliases": ["Virtual Memory"]},
+      {"canonical_name": "文件系统", "aliases": ["File System", "FS"]},
+      {"canonical_name": "内核", "aliases": ["Kernel"]},
+      {"canonical_name": "中断", "aliases": ["Interrupt"]},
+      {"canonical_name": "信号量", "aliases": ["Semaphore"]},
+      {"canonical_name": "互斥锁", "aliases": ["Mutex", "互斥量"]}
+    ]
+  }
+}
