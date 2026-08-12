@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import TreeView from './components/TreeView'
 import ConceptGraph from './components/ConceptGraph'
+import ReadingPane from './components/ReadingPane'
 import MemoryView from './components/MemoryView'
 import { useStore } from './store/qaStore'
 
@@ -49,8 +50,11 @@ export default function App() {
           <>
             <TreeView />
             <main style={styles.main}>
-              <ConceptGraph />
+              <ReadingPane />
             </main>
+            <aside style={styles.graphAside}>
+              <ConceptGraph />
+            </aside>
           </>
         ) : (
           <main style={styles.memoryMain}>
@@ -91,5 +95,6 @@ const styles = {
   },
   body: { flex: 1, display: 'flex', overflow: 'hidden' },
   main: { flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 },
+  graphAside: { width: 380, borderLeft: '1px solid var(--rule)', display: 'flex', flexDirection: 'column', flexShrink: 0 },
   memoryMain: { flex: 1, overflow: 'auto', background: 'var(--paper)' },
 }
