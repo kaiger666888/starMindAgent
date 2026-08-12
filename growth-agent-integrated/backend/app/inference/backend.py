@@ -112,16 +112,24 @@ class OpenAICompatibleBackend:
         self.backup_model = os.getenv("LLM_BACKUP_MODEL", self.model)
         self.endpoint = f"{self.base_url}/chat/completions"
         self._aborted = False
+        # 思考模型（如 glm-5.2）默认关闭思考以避免 30-50s 首 token 延迟
+        # 设 LLM_THINKING=enabled 可恢复思考（深度优先）
+        self.thinking_enabled = os.getenv("LLM_THINKING", "disabled").lower() in ("1", "true", "enabled", "on")
+
+    def _payload(self, messages, stream: bool) -> dict:
+        payload = {"model": self.model, "stream": stream, "messages": messages}
+        if not self.thinking_enabled:
+            # 关闭思考：网关直接吐 content，首 token 秒回
+            payload["thinking"] = {"type": "disabled"}
+        return payload
 
     async def stream(self, prompt: str) -> AsyncIterator[str]:
         import httpx
         self._aborted = False
-        payload = {
-            "model": self.model, "stream": True,
-            "messages": [{"role": "system", "content": "先输出正文，再换行输出 "
-                f"{settings.concept_sentinel}，最后输出 ConceptBlock JSON。"},
-                {"role": "user", "content": prompt}],
-        }
+        messages = [{"role": "system", "content": "先输出正文，再换行输出 "
+            f"{settings.concept_sentinel}，最后输出 ConceptBlock JSON。"},
+            {"role": "user", "content": prompt}]
+        payload = self._payload(messages, stream=True)
         async with httpx.AsyncClient(timeout=settings.inference_timeout_s) as client:
             async with client.stream("POST", self.endpoint,
                 headers={"Authorization": f"Bearer {self.api_key}",
@@ -139,11 +147,9 @@ class OpenAICompatibleBackend:
 
     async def extract_only(self, answer_text: str) -> ConceptBlock:
         import httpx
-        payload = {
-            "model": self.model, "stream": False,
-            "messages": [{"role": "system", "content": "从正文抽取概念，只输出 ConceptBlock JSON。"},
-                {"role": "user", "content": answer_text}],
-        }
+        messages = [{"role": "system", "content": "从正文抽取概念，只输出 ConceptBlock JSON。"},
+            {"role": "user", "content": answer_text}]
+        payload = self._payload(messages, stream=False)
         async with httpx.AsyncClient(timeout=settings.json_parse_timeout_s) as c:
             r = await c.post(self.endpoint, headers={"Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json"}, json=payload)

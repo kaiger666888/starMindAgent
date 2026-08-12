@@ -259,6 +259,9 @@ async def _chat_text(backend, prompt: str) -> str:
             {"role": "user", "content": prompt},
         ],
     }
+    # 关闭思考：画像总结不需要推理，直接拿正文，秒回
+    if hasattr(backend, "thinking_enabled") and not backend.thinking_enabled:
+        payload["thinking"] = {"type": "disabled"}
     async with httpx.AsyncClient(timeout=90.0) as c:
         r = await c.post(backend.endpoint,
             headers={"Authorization": f"Bearer {backend.api_key}", "Content-Type": "application/json"},
