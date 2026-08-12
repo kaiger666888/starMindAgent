@@ -42,9 +42,10 @@ export default function TreeView() {
     if (concept?.understood) return
     // 记录"上次在这里看的概念"（需求二节：回上层高亮探索断点）
     setLastViewed(parentQaId, conceptId)
+    // 后端 drilldown 若 explore_count≥2 会注入差异化引导前缀到 question（需求五）
     const child = await api.drillDown(parentQaId, conceptId, conceptName)
     pushLayer({
-      qa_id: child.qa_id, question: conceptName, answer: '',
+      qa_id: child.qa_id, question: child.question || conceptName, answer: '',
       status: 'generating', concepts: [], layer_summary: '', loading: true,
     })
     api.incrementExplore(conceptId) // 热度 +1
