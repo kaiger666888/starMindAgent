@@ -32,6 +32,7 @@ class QAStartRequest(BaseModel):
     question: str
     domain_tag: Optional[str] = None
     parent_qa_id: Optional[str] = None  # 下钻时挂父 QAStep
+    user_id: Optional[str] = None  # 学习记忆：绑定会话归属用户（缺省用 "default"）
 
 
 class QAStepOut(BaseModel):
@@ -75,3 +76,34 @@ class GraphRequest(BaseModel):
 
 class ExploreRequest(BaseModel):
     concept_id: str
+
+
+# —— 学习记忆接口 ——
+class SessionSummary(BaseModel):
+    """会话列表项。"""
+    session_id: str
+    user_id: Optional[str] = None
+    domain_tag: Optional[str] = None
+    created_at: Optional[str] = None
+    qa_count: int = 0
+    last_question: Optional[str] = None
+
+
+class SessionDetail(BaseModel):
+    """单个会话的完整 QA 步骤树。"""
+    session_id: str
+    user_id: Optional[str] = None
+    domain_tag: Optional[str] = None
+    created_at: Optional[str] = None
+    steps: list[dict] = []  # 每个 step: qa_id/parent_qa_id/question/answer/status/depth
+
+
+class ProfileResponse(BaseModel):
+    """学习画像。"""
+    user_id: str
+    profile: dict = {}  # mastered/weak/interests/recommendation/summary
+    qa_count: int = 0
+    concept_count: int = 0
+    last_summary_at: Optional[str] = None
+    summary_model: Optional[str] = None
+    stale: bool = True  # True=有新 QA 未纳入画像，建议 refresh

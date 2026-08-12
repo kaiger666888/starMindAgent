@@ -145,3 +145,29 @@ class BackfillTask(Base):
             postgresql_where="status = 'pending'",
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# 学习记忆层（对应 migrations/003_memory.sql）
+# - app_user: 轻量用户主表（外部传入 user_id，免登录）
+# - user_profile: LLM 周期性总结的学习画像（JSONB）
+# 原始学习数据在 qa_session/qa_step/concept_node，画像在此聚合。
+# ---------------------------------------------------------------------------
+class AppUser(Base):
+    __tablename__ = "app_user"
+    user_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    display_name: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_active_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class UserProfile(Base):
+    __tablename__ = "user_profile"
+    user_id: Mapped[str] = mapped_column(Text, ForeignKey("app_user.user_id", ondelete="CASCADE"), primary_key=True)
+    # LLM 总结的画像：{mastered:[], weak:[], interests:[], recommendation:str, summary:str}
+    profile: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    qa_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    concept_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_summary_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    summary_model: Mapped[str | None] = mapped_column(Text)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)

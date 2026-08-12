@@ -37,9 +37,22 @@ def _pipeline_for(qa_id: str, session_id: str, question: str) -> QAStepPipeline:
 async def start(req: QAStartRequest):
     """出口3：新问题 → 开新探索树（parent_qa_id=None）。"""
     from app.db import session_scope
-    from app.models.tables import QASession
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from sqlalchemy import update
+    from app.models.tables import QASession, AppUser
+    from datetime import datetime, timezone
+    user_id = req.user_id or "default"
     async with session_scope() as s:
-        sess = QASession(domain_tag=req.domain_tag)
+        # upsert app_user：首次见到该 user_id 即建行，后续刷新 last_active_at
+        stmt = pg_insert(AppUser).values(
+            user_id=user_id, last_active_at=datetime.now(timezone.utc)
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[AppUser.user_id],
+            set_={"last_active_at": datetime.now(timezone.utc)},
+        )
+        await s.execute(stmt)
+        sess = QASession(user_id=user_id, domain_tag=req.domain_tag)
         s.add(sess)
         await s.flush()
         session_id = sess.session_id
