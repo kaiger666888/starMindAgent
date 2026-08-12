@@ -192,6 +192,7 @@ class QAStepPipeline:
             parsed_concepts=[c["canonical_name"] for c in concepts_out],
             aliases=[a for c in concepts_out for a in c.get("aliases", [])],
             confidence=_avg_confidence(concept_block),
+            extracted_concept_ids=[c["concept_id"] for c in concepts_out if c.get("concept_id")],
         )
         # —— 评测埋点 NDJSON（11 字段，评测管线按 qa_id 回放比对 golden set）——
         from app.qastep.telemetry import emit_telemetry

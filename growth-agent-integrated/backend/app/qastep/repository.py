@@ -222,13 +222,15 @@ class QAStepRepository:
 
     # —— 埋点字段落盘 ——
     async def persist_telemetry(self, qa_id: str, *, model, prompt_hash,
-                                raw_output, parsed_concepts, aliases, confidence) -> None:
+                                raw_output, parsed_concepts, aliases, confidence,
+                                extracted_concept_ids=None) -> None:
         async with session_scope() as s:
+            vals = dict(model=model, prompt_hash=prompt_hash, raw_output=raw_output,
+                        parsed_concepts=parsed_concepts, aliases=aliases, confidence=confidence)
+            if extracted_concept_ids is not None:
+                vals["extracted_concept_ids"] = extracted_concept_ids
             await s.execute(
-                update(QAStepModel).where(QAStepModel.qa_id == qa_id).values(
-                    model=model, prompt_hash=prompt_hash, raw_output=raw_output,
-                    parsed_concepts=parsed_concepts, aliases=aliases, confidence=confidence,
-                )
+                update(QAStepModel).where(QAStepModel.qa_id == qa_id).values(**vals)
             )
 
     # —— 递归 CTE 查询整棵探索树（层级展开）——

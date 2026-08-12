@@ -86,12 +86,29 @@ async def stream(qa_id: str):
 
 @router.post("/{qa_id}/drilldown", response_model=QAStepOut)
 async def drilldown(qa_id: str, req: DriftDownRequest):
-    """出口1：点击概念下钻 → fork 新 QAStep，挂 parent_qa_id。"""
+    """出口1：点击概念下钻 → fork 新 QAStep，挂 parent_qa_id。
+
+    需求五"差异化引导"：若该概念 explore_count≥2，查历史语境注入 prompt——
+    "你之前在 X 语境下了解过这个概念，这里补充它在当前语境下的不同侧面"。
+    """
+    from app.concept import concept_service
     parent = await _load_meta(qa_id)
+    # 查概念历史语境
+    history = await concept_service.get_concept_history(req.concept_id)
+    question = req.question
+    if history and history.get("explore_count", 0) >= 2:
+        contexts = history.get("contexts", [])
+        prior_qs = [c["question"] for c in contexts[:3] if c.get("question")]
+        if prior_qs:
+            hint = (
+                f"（你之前在「{'、'.join(prior_qs)}」的语境下了解过【{history.get('canonical_name', '')}】，"
+                f"这里请补充它在当前语境下的不同侧面，避免与前述内容重复。）"
+            )
+            question = f"{hint} {question}"
     pipe = _pipeline_for(qa_id, parent["session_id"], parent["question"])
     try:
         new_pipe = await pipe.drill_down(
-            parent_qa_id=qa_id, concept_id=req.concept_id, question=req.question
+            parent_qa_id=qa_id, concept_id=req.concept_id, question=question
         )
     except DepthLimitReached as e:
         # 膨胀降级：超 6 层 -> 标注已有概念，不新建推理

@@ -211,14 +211,16 @@ class ConceptService:
             if node is None:
                 return {"concept_id": concept_id, "explore_count": 0, "contexts": []}
             # 查哪些 qa_step 的 extracted_concept_ids 含此 concept
-            # JSONB @> 查询
+            # JSONB @> 查询（cast jsonb 避免类型不匹配）
+            import json as _json_mod
+            from sqlalchemy import text
             rows = (
                 await s.execute(
-                    select(QAStep.qa_id, QAStep.question, QAStep.session_id, QAStep.created_at)
-                    .where(QAStep.extracted_concept_ids.op('@>')(
-                        __import__('json').dumps([str(concept_id)])
-                    ))
-                    .order_by(QAStep.created_at.desc()).limit(limit)
+                    text(
+                        "SELECT qa_id, question, session_id, created_at FROM qa_step "
+                        "WHERE extracted_concept_ids @> CAST(:cid AS jsonb) "
+                        "ORDER BY created_at DESC LIMIT :lim"
+                    ).bindparams(cid=_json_mod.dumps([str(concept_id)]), lim=limit)
                 )
             ).all()
             return {
