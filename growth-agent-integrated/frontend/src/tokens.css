@@ -1,0 +1,59 @@
+/* 「伴你成长」学习手账设计 token —— 全局共享
+ * 两视图(探索/档案)共享 paper/ink/serif,避免割裂
+ * 活跃信号用墨蓝(settled 用陶土棕),语义化非装饰
+ */
+
+:root {
+  /* —— Color —— */
+  --paper: #FAF8F3;          /* 暖纸底,全局基调 */
+  --paper-soft: #F3EFE5;     /* 次级区块底 */
+  --ink: #1F2421;            /* 墨黑正文 */
+  --ink-soft: #5B6359;       /* 次要文字/层摘要 */
+  --ink-faint: #9A9388;      /* 占位/计数/时间戳 */
+  --rule: #D9D2C5;           /* 发丝线 */
+  --rule-soft: #E8E1D3;      /* 次级发丝线 */
+  --active: #2B5F8A;         /* 活跃信号:generating/当前层/进行中 */
+  --active-soft: #E6EEF5;    /* 活跃浅底 */
+  --settled: #8B5A3C;        /* 沉淀信号:已理解/层摘要/档案 */
+  --settled-soft: #E8DCCD;   /* 沉淀浅底 */
+  --danger: #B4544A;         /* 警告/深度上限/误删 */
+  --danger-soft: #F6E8E5;
+
+  /* —— 着色档(概念热度,对数1/2/4/8) —— */
+  --tier-gray: #9ca3af;
+  --tier-green: #22c55e;
+  --tier-red-1: #fca5a5;     /* 回访,浅 */
+  --tier-red-2: #f87171;
+  --tier-red-3: #ef4444;
+  --tier-red-4: #b91c1c;     /* 反复下钻,深 */
+
+  /* —— Typography —— */
+  --serif: "Source Serif 4", "Songti SC", "STSong", Georgia, serif;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+
+  /* —— Spacing —— */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  /* —— Radius —— */
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-pill: 999px;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.85); }
+}
+
+/* 生长茎节点的"呼吸"——当前活跃层 */
+@keyframes stemBreath {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+

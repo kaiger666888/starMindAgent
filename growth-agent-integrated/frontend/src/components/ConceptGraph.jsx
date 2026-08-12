@@ -10,7 +10,7 @@ const VIEWS = [
   { key: 'domain_graph', label: '状态三·领域扩展', desc: '已探索概念为种子，向外扩展1-2跳（导航入口）' },
 ]
 
-// 节点热度对数四档着色（需求四节：1/2/4/8）
+// 节点热度对数四档着色（需求四节：1/2/4/8）——实际颜色值（cytoscape canvas 不读 CSS 变量）
 const TIER_FILL = {
   gray: '#9ca3af',      // 未探索
   green: '#22c55e',     // 探索1次
@@ -145,20 +145,23 @@ export default function ConceptGraph() {
       style: [
         { selector: 'node', style: {
           'label': 'data(label)', 'text-valign': 'center', 'text-halign': 'center',
-          'font-size': 11, 'color': '#fff', 'width': 38, 'height': 38,
-          'background-color': '#9ca3af', 'border-width': 1, 'border-color': '#fff',
+          'font-size': 12, 'color': '#1F2421', 'font-family': '"Source Serif 4", Georgia, serif',
+          'font-weight': 500, 'width': 46, 'height': 46,
+          'background-color': '#FAF8F3', 'border-width': 2, 'border-color': '#D9D2C5',
+          'text-wrap': 'wrap', 'text-max-width': 70,
         }},
         { selector: 'node[is_extension = "true"]', style: {
-          'border-style': 'dashed', 'border-width': 2, 'border-color': '#6b7280',
-          'font-style': 'italic',
+          'border-style': 'dashed', 'border-width': 2, 'border-color': '#9A9388',
+          'font-style': 'italic', 'color': '#9A9388',
         }},
         { selector: 'edge', style: {
-          'line-color': '#cbd5e1', 'width': 1.5, 'curve-style': 'bezier',
-          'target-arrow-shape': 'triangle', 'target-arrow-color': '#cbd5e1',
+          'line-color': '#D9D2C5', 'width': 1.2, 'curve-style': 'bezier',
+          'target-arrow-shape': 'triangle', 'target-arrow-color': '#D9D2C5',
+          'opacity': 0.55,
         }},
-        { selector: 'node:selected', style: { 'border-width': 3, 'border-color': '#f59e0b' } },
-        { selector: 'node.dimmed', style: { opacity: 0.2 } },
-        { selector: 'node.merge-candidate', style: { 'border-width': 4, 'border-color': '#dc2626', 'border-style': 'dashed' } },
+        { selector: 'node:selected', style: { 'border-width': 3, 'border-color': '#2B5F8A' } },
+        { selector: 'node.dimmed', style: { opacity: 0.15 } },
+        { selector: 'node.merge-candidate', style: { 'border-width': 3, 'border-color': '#B4544A', 'border-style': 'dashed' } },
       ],
       layout: { name: 'cose', animate: true, animateFilter: () => false,
         nodeRepulsion: () => 8000, idealEdgeLength: () => 90 },
@@ -209,8 +212,9 @@ export default function ConceptGraph() {
         aliases: n.aliases || [],
       },
       style: {
-        'background-color': n.understood ? '#e5e7eb' : TIER_FILL[tierForCount(n.explore_count || 0)],
+        'background-color': n.understood ? '#E8DCCD' : TIER_FILL[tierForCount(n.explore_count || 0)],
         opacity: n.understood ? 0.5 : 1,
+        'border-color': n.understood ? '#8B5A3C' : '#D9D2C5',
       },
     }))
     const edges = (g.edges || []).filter((e) => allowedOrigins.includes(e.origin)).map((e) => ({
@@ -284,19 +288,19 @@ export default function ConceptGraph() {
 const styles = {
   toolbar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', borderBottom: '1px solid #e5e7eb', gap: 8, flexWrap: 'wrap' },
   viewSwitch: { display: 'flex', gap: 4 },
-  viewBtn: { padding: '4px 10px', fontSize: 12, background: '#f3f4f6', color: '#6b7280', border: '1px solid #e5e7eb', borderRadius: 4, cursor: 'pointer' },
-  viewBtnActive: { background: '#2563eb', color: '#fff', borderColor: '#2563eb' },
-  search: { padding: '4px 8px', fontSize: 12, border: '1px solid #d1d5db', borderRadius: 4, width: 140 },
-  scopeSwitch: { display: 'flex', gap: 2, background: '#f9fafb', borderRadius: 4, padding: 2 },
-  scopeBtn: { padding: '3px 8px', fontSize: 11, background: 'transparent', color: '#6b7280', border: 'none', borderRadius: 3, cursor: 'pointer' },
-  scopeBtnActive: { background: '#fff', color: '#1f2937', boxShadow: '0 1px 2px rgba(0,0,0,0.1)' },
-  viewDesc: { fontSize: 11, color: '#9ca3af', padding: '4px 12px', fontStyle: 'italic' },
-  legend: { display: 'flex', gap: 12, padding: '4px 12px', fontSize: 11, color: '#6b7280', flexWrap: 'wrap' },
+  viewBtn: { padding: '4px 10px', fontSize: 12, background: 'var(--paper-soft)', color: 'var(--ink-soft)', border: '1px solid var(--rule-soft)', borderRadius: 'var(--r-sm)', cursor: 'pointer', fontFamily: 'var(--sans)' },
+  viewBtnActive: { background: 'var(--active)', color: '#fff', borderColor: 'var(--active)' },
+  search: { padding: '5px 10px', fontSize: 12, border: '1px solid var(--rule)', borderRadius: 'var(--r-sm)', width: 150, fontFamily: 'var(--sans)', background: 'var(--paper)', color: 'var(--ink)' },
+  scopeSwitch: { display: 'flex', gap: 2, background: 'var(--paper-soft)', borderRadius: 'var(--r-sm)', padding: 2 },
+  scopeBtn: { padding: '3px 8px', fontSize: 11, background: 'transparent', color: 'var(--ink-soft)', border: 'none', borderRadius: 3, cursor: 'pointer', fontFamily: 'var(--mono)' },
+  scopeBtnActive: { background: 'var(--paper)', color: 'var(--ink)', boxShadow: '0 1px 2px rgba(0,0,0,0.06)' },
+  viewDesc: { fontSize: 11, color: 'var(--ink-faint)', padding: '4px 12px', fontStyle: 'italic', fontFamily: 'var(--sans)' },
+  legend: { display: 'flex', gap: 12, padding: '4px 12px', fontSize: 11, color: 'var(--ink-soft)', flexWrap: 'wrap', fontFamily: 'var(--mono)' },
   legendItem: { display: 'inline-flex', alignItems: 'center', gap: 4 },
   dot: { width: 10, height: 10, borderRadius: '50%', display: 'inline-block' },
-  canvas: { flex: 1, minHeight: 300, background: '#fff' },
-  loading: { position: 'absolute', top: 80, right: 20, padding: '4px 10px', background: '#fff', border: '1px solid #e5e7eb', borderRadius: 4, fontSize: 12, color: '#6b7280' },
-  mergeBar: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', background: '#fef2f2', borderBottom: '1px solid #fecaca', fontSize: 12, color: '#991b1b' },
-  mergeBtn: { padding: '3px 10px', fontSize: 12, background: '#dc2626', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' },
-  clearBtn: { padding: '3px 10px', fontSize: 12, background: 'transparent', color: '#991b1b', border: '1px solid #fecaca', borderRadius: 4, cursor: 'pointer' },
+  canvas: { flex: 1, minHeight: 300, background: 'var(--paper)' },
+  loading: { position: 'absolute', top: 80, right: 20, padding: '4px 10px', background: 'var(--paper)', border: '1px solid var(--rule)', borderRadius: 'var(--r-sm)', fontSize: 12, color: 'var(--ink-soft)' },
+  mergeBar: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', background: 'var(--danger-soft)', borderBottom: '1px solid var(--danger)', fontSize: 12, color: 'var(--danger)', fontFamily: 'var(--sans)' },
+  mergeBtn: { padding: '3px 10px', fontSize: 12, background: 'var(--danger)', color: '#fff', border: 'none', borderRadius: 'var(--r-sm)', cursor: 'pointer' },
+  clearBtn: { padding: '3px 10px', fontSize: 12, background: 'transparent', color: 'var(--danger)', border: '1px solid var(--danger)', borderRadius: 'var(--r-sm)', cursor: 'pointer' },
 }

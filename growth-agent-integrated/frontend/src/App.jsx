@@ -13,7 +13,6 @@ export default function App() {
   useEffect(() => {
     const handler = (e) => {
       setView('explore')
-      // 通过自定义事件传给 TreeView（TreeView 监听 window 预填）
       window.dispatchEvent(new CustomEvent('starmind:prefillQuestion', { detail: e.detail }))
     }
     window.addEventListener('starmind:startFromConcept', handler)
@@ -23,23 +22,26 @@ export default function App() {
   return (
     <div style={styles.app}>
       <header style={styles.header}>
-        <h1 style={styles.title}>伴你成长 · 概念探索</h1>
+        <h1 style={styles.title}>伴你成长</h1>
+        <span style={styles.subtitle}>概念探索</span>
         <nav style={styles.nav}>
           <button
-            style={{ ...styles.navBtn, ...(view === 'explore' ? styles.navBtnActive : {}) }}
+            style={{ ...styles.navBtn, ...(view === 'explore' ? styles.navBtnActive : styles.navBtnIdle) }}
             onClick={() => setView('explore')}
           >
             探索
           </button>
           <button
-            style={{ ...styles.navBtn, ...(view === 'memory' ? styles.navBtnActive : {}) }}
+            style={{ ...styles.navBtn, ...(view === 'memory' ? styles.navBtnActiveSettled : styles.navBtnIdle) }}
             onClick={() => setView('memory')}
           >
             档案
           </button>
         </nav>
         {inflight && view === 'explore' && (
-          <span style={styles.inflight}>生成中…（在途请求互斥，请稍候）</span>
+          <span style={styles.inflight}>
+            <span style={styles.pulse} /> 生成中
+          </span>
         )}
       </header>
       <div style={styles.body}>
@@ -61,22 +63,33 @@ export default function App() {
 }
 
 const styles = {
-  app: { height: '100%', display: 'flex', flexDirection: 'column' },
+  app: { height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--paper)' },
   header: {
-    padding: '10px 16px', borderBottom: '1px solid #e5e7eb',
-    display: 'flex', alignItems: 'center', gap: 16, background: '#fff',
+    padding: '10px 20px', borderBottom: '1px solid var(--rule)',
+    display: 'flex', alignItems: 'baseline', gap: 12, background: 'var(--paper)',
   },
-  title: { fontSize: 16, margin: 0, flex: 1 },
-  nav: { display: 'flex', gap: 4 },
+  title: {
+    fontFamily: 'var(--serif)', fontSize: 20, fontWeight: 600, margin: 0,
+    letterSpacing: '0.02em', color: 'var(--ink)',
+  },
+  subtitle: {
+    fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink-faint)',
+    textTransform: 'uppercase', letterSpacing: '0.12em', flex: 1,
+  },
+  nav: { display: 'flex', gap: 2, background: 'var(--paper-soft)', borderRadius: 'var(--r-sm)', padding: 2 },
   navBtn: {
-    padding: '5px 12px', fontSize: 13, background: 'transparent', color: '#6b7280',
-    border: '1px solid #e5e7eb', borderRadius: 4, cursor: 'pointer',
+    padding: '4px 14px', fontSize: 13, border: 'none', borderRadius: 'var(--r-sm)', cursor: 'pointer',
+    fontFamily: 'var(--sans)', transition: 'all 0.15s',
   },
-  navBtnActive: { background: '#2563eb', color: '#fff', borderColor: '#2563eb' },
-  inflight: { fontSize: 12, color: '#f59e0b' },
+  navBtnIdle: { background: 'transparent', color: 'var(--ink-soft)' },
+  navBtnActive: { background: 'var(--active)', color: '#fff', fontWeight: 500 },
+  navBtnActiveSettled: { background: 'var(--settled)', color: '#fff', fontWeight: 500 },
+  inflight: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--active)', fontFamily: 'var(--mono)' },
+  pulse: {
+    width: 6, height: 6, borderRadius: '50%', background: 'var(--active)',
+    animation: 'pulse 1.4s ease-in-out infinite',
+  },
   body: { flex: 1, display: 'flex', overflow: 'hidden' },
-  main: { flex: 1, display: 'flex', flexDirection: 'column' },
-  memoryMain: {
-    flex: 1, overflow: 'auto', background: '#FAF8F3',
-  },
+  main: { flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 },
+  memoryMain: { flex: 1, overflow: 'auto', background: 'var(--paper)' },
 }

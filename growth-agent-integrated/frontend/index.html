@@ -4,9 +4,17 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>伴你成长 · 概念探索</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/src/tokens.css">
     <style>
       html, body, #root { height: 100%; margin: 0; }
-      body { font-family: -apple-system, "Segoe UI", "PingFang SC", sans-serif; background: #f7f8fa; }
+      body {
+        font-family: var(--sans, -apple-system, "Segoe UI", "PingFang SC", sans-serif);
+        background: var(--paper, #FAF8F3);
+        color: var(--ink, #1F2421);
+      }
     </style>
   </head>
   <body>
