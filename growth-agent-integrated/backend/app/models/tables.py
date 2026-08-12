@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime
 from sqlalchemy import (
     String, Text, Integer, Float, DateTime, ForeignKey, CheckConstraint, Index, func,
-    BigInteger,
+    BigInteger, Boolean,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -34,6 +34,11 @@ class ConceptNode(Base):
     domain_tag: Mapped[str | None] = mapped_column(Text)
     source: Mapped[str] = mapped_column(Text, nullable=False, default="llm_extracted")
     explore_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # 004 增强：双计数 + 成熟度（红色语义区分）
+    drill_down_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 主动下钻
+    visit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 回访
+    understood: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    last_explored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -87,6 +92,12 @@ class QAStep(Base):
     aliases: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     confidence: Mapped[float | None] = mapped_column(Float)
     depth: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    # 004 增强：层摘要 / 放弃标记 / 上次看的概念
+    layer_summary: Mapped[str | None] = mapped_column(Text)
+    browsed_not_drilled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    last_viewed_concept_id: Mapped[str | None] = mapped_column(
+        ForeignKey("concept_node.concept_id", ondelete="SET NULL")
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

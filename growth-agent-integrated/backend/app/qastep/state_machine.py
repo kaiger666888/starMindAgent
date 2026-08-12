@@ -158,6 +158,12 @@ class QAStepPipeline:
             await self.repo.link_co_occurrence(self.qa_id, self.session_id, concepts_out)
             yield {"type": "concepts", "concepts": concepts_out}
 
+        # —— 层摘要：在概念列表之上生成"这层你理解了什么"，作树节点折叠预览 ——
+        layer_summary = await self._gen_layer_summary("".join(answer_buf), concepts_out)
+        if layer_summary:
+            await self.repo.update_layer_summary(self.qa_id, layer_summary)
+            yield {"type": "layer_summary", "layer_summary": layer_summary}
+
         # 埋点字段落盘（评测依赖）
         await self.repo.persist_telemetry(
             self.qa_id,
@@ -191,6 +197,33 @@ class QAStepPipeline:
         await self.repo.transition(self.qa_id, QAStatus.WAITING)
         yield {"type": "status", "status": QAStatus.WAITING.value}
         yield {"type": "done", "qa_id": self.qa_id}
+
+    async def _gen_layer_summary(self, answer_text: str, concepts: list[dict]) -> str | None:
+        """生成"这层你理解了什么"层摘要（≤60字），作树节点折叠预览。"""
+        if not answer_text.strip():
+            return None
+        # 取后端：self.inference 可能是 harness.InferenceSession（含 .client.backend）
+        # 或 InferenceClient（含 .backend）；都拿不到就用 default_backend()
+        from app.inference.backend import default_backend
+        backend = getattr(self.inference, "backend", None)
+        if backend is None:
+            client = getattr(self.inference, "client", None)
+            backend = getattr(client, "backend", None) if client else None
+        if backend is None or not hasattr(backend, "complete_text"):
+            backend = default_backend()
+        if not hasattr(backend, "complete_text"):
+            return None  # StubLLMBackend 无 complete_text，跳过
+        names = "、".join(c.get("canonical_name", "") for c in concepts[:8]) if concepts else "（未抽取到概念）"
+        system = (
+            "你用一句话（不超过60字）概括用户这层问答理解了什么，"
+            "基于答案和抽取的概念。直接输出概括句，不加前缀和引号。"
+        )
+        user = f"问题：{self.question}\n答案摘要：{answer_text[:600]}\n抽取概念：{names}"
+        try:
+            return await backend.complete_text(system, user, timeout=20.0)
+        except Exception as e:
+            log.warning("layer summary failed: %s", e)
+            return None
 
     # —— 三个出口（均从 waiting 出发，由 API 路由调用）——
     async def drill_down(self, parent_qa_id: str, concept_id: str,

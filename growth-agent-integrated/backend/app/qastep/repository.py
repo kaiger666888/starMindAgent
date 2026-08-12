@@ -77,6 +77,13 @@ class QAStepRepository:
                 "WHERE qa_id = CAST(:id AS uuid)"
             ).bindparams(d=delta, id=qa_id))
 
+    async def update_layer_summary(self, qa_id: str, summary: str) -> None:
+        """落盘层摘要（"这层你理解了什么"，作树节点折叠预览）。"""
+        async with session_scope() as s:
+            await s.execute(text(
+                "UPDATE qa_step SET layer_summary = :s WHERE qa_id = CAST(:id AS uuid)"
+            ).bindparams(s=summary, id=qa_id))
+
     async def restore_context(self, qa_id: str) -> dict:
         """回上层：恢复该 QAStep 的完整现场（answer + 概念 + offset）。"""
         async with session_scope() as s:

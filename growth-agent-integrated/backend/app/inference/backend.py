@@ -160,6 +160,20 @@ class OpenAICompatibleBackend:
             raise RuntimeError("extract_only produced unparseable block")
         return block
 
+    async def complete_text(self, system: str, user: str, timeout: float = 30.0) -> str:
+        """通用非流式文本生成（层摘要/画像总结等复用）。返回 message.content。"""
+        import httpx
+        payload = self._payload(
+            [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            stream=False,
+        )
+        async with httpx.AsyncClient(timeout=timeout) as c:
+            r = await c.post(self.endpoint,
+                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                json=payload)
+            data = r.json()
+        return data["choices"][0]["message"].get("content") or ""
+
     async def abort(self) -> None:
         self._aborted = True
 
