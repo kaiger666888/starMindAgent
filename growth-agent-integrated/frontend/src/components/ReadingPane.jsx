@@ -21,22 +21,29 @@ function tierForCount(c) {
 
 export default function ReadingPane() {
   const stack = useStore((s) => s.stack)
+  const currentIdx = useStore((s) => s.currentIdx)
   const inflight = useStore((s) => s.inflight)
   const activeSid = useStore((s) => s.activeSessionId)
 
-  // 当前层 = 栈顶
-  const current = stack[stack.length - 1]
+  // 当前层 = currentIdx 指向的层（回上层只移 idx 不删层）
+  const current = currentIdx >= 0 ? stack[currentIdx] : stack[stack.length - 1]
 
   if (!current) {
     return (
       <div style={styles.empty}>
+        <div style={styles.emptyStem} aria-hidden="true" />
         <div style={styles.emptyTitle}>从一个问题开始</div>
-        <div style={styles.emptyDesc}>在左侧输入问题，回答会在这里展开。<br />回答中的关键概念会内联标注，点击下钻层层深入。</div>
+        <div style={styles.emptyDesc}>
+          在左侧提一个问题，回答会在这里展开。<br />
+          回答中的关键概念会内联标注，点击可层层下钻，长成一棵探索树。
+        </div>
+        <div style={styles.emptyHint}>例：什么是梯度下降？ · 为什么需要激活函数？</div>
       </div>
     )
   }
 
-  return <ReadingLayer layer={current} depth={stack.length} inflight={inflight} />
+  const depth = (currentIdx >= 0 ? currentIdx : stack.length - 1) + 1
+  return <ReadingLayer layer={current} depth={depth} inflight={inflight} />
 }
 
 function ReadingLayer({ layer, depth, inflight }) {
@@ -49,31 +56,38 @@ function ReadingLayer({ layer, depth, inflight }) {
   return (
     <div style={styles.wrap}>
       <div style={styles.scrollWrap}>
-        {/* 层标签 + 生长茎 */}
-        <div style={styles.layerHeader}>
-          <div style={styles.stem} />
-          <div style={styles.layerMeta}>
-            <span style={styles.depthTag}>L{depth}</span>
-            <span style={styles.layerQ}>{layer.question}</span>
-            {layer.loading && <span style={styles.loadingDot} />}
+        {/* 层标签 + 生长茎(签名元素) */}
+        <header style={styles.layerHeader}>
+          <div style={styles.stem} aria-hidden="true">
+            <span style={styles.stemNode} />
           </div>
-        </div>
+          <div style={styles.layerMeta}>
+            <span style={styles.depthTag}>第 {depth} 层</span>
+            <h1 style={styles.layerQ}>{layer.question}</h1>
+            {layer.loading && <span style={styles.loadingDot} title="生成中" />}
+          </div>
+        </header>
 
-        {/* 回答正文 + 内联概念 */}
+        {/* 回答正文 + 内联概念 —— 衬线正文,书本感 */}
         <article style={styles.answer}>
           {layer.answer ? (
             <InlineAnswer segments={segments} layer={layer} inflight={inflight} />
           ) : (
-            <div style={styles.generating}>{layer.loading ? '正在生成回答…' : '（空回答）'}</div>
+            <div style={styles.generating}>
+              {layer.loading ? '正在落笔…' : '（空回答）'}
+            </div>
           )}
         </article>
 
-        {/* 层摘要 */}
+        {/* 层摘要 —— 沉淀信号,陶土棕左边线 */}
         {layer.layer_summary && (
-          <div style={styles.layerSummary}>{layer.layer_summary}</div>
+          <aside style={styles.layerSummary}>
+            <span style={styles.summaryMark}>摘</span>
+            <span style={styles.summaryText}>{layer.layer_summary}</span>
+          </aside>
         )}
 
-        {/* 未匹配的概念（抽取了但正文没出现） */}
+        {/* 未匹配的概念(抽取了但正文没出现) */}
         {unmatched.length > 0 && (
           <div style={styles.unmatchedBlock}>
             <div style={styles.unmatchedLabel}>抽取但正文未出现</div>
@@ -85,7 +99,7 @@ function ReadingLayer({ layer, depth, inflight }) {
           </div>
         )}
 
-        {/* 选中创建提示 */}
+        {/* 选中创建提示 —— 静默脚注,不抢正文 */}
         <div style={styles.hint}>选中正文里的词，可标为概念并下钻</div>
       </div>
     </div>
@@ -198,18 +212,27 @@ function ConceptInline({ concept, inflight, layer, inline }) {
   }
 
   if (inline) {
-    // 内联在正文里：加下划线 + 着色文字
+    // 内联在正文里:墨蓝下划点(未探索)/陶土棕虚线(已理解),不抢正文
+    const understoodStyle = understood ? {
+      color: 'var(--settled)',
+      textDecoration: 'underline',
+      textDecorationStyle: 'dashed',
+      textDecorationColor: 'var(--settled)',
+      textDecorationThickness: '1px',
+      textUnderlineOffset: '4px',
+      cursor: 'default',
+    } : {
+      color: 'var(--active)',
+      textDecoration: 'underline',
+      textDecorationStyle: 'dotted',
+      textDecorationColor: 'var(--active)',
+      textDecorationThickness: '1.5px',
+      textUnderlineOffset: '4px',
+      cursor: 'pointer',
+    }
     return (
       <span
-        style={{
-          ...styles.inline,
-          color: understood ? 'var(--settled)' : TIER_COLOR[tier],
-          cursor: understood ? 'default' : 'pointer',
-          textDecoration: understood ? 'none' : 'underline',
-          textDecorationStyle: 'dotted',
-          textDecorationThickness: '2px',
-          textUnderlineOffset: '3px',
-        }}
+        style={{ ...styles.inline, ...understoodStyle }}
         onMouseEnter={() => setShowTip(true)}
         onMouseLeave={() => setShowTip(false)}
         onClick={onDrill}
@@ -288,52 +311,75 @@ function buildInlineSegments(answer, concepts) {
 
 const styles = {
   wrap: { flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, background: 'var(--paper)' },
-  scrollWrap: { maxWidth: 720, margin: '0 auto', padding: '24px 32px 48px', width: '100%' },
-  empty: { flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: 48, background: 'var(--paper)' },
-  emptyTitle: { fontFamily: 'var(--serif)', fontSize: 18, color: 'var(--ink)', marginBottom: 12 },
-  emptyDesc: { fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.7, textAlign: 'center', maxWidth: 400 },
-  // 层标签 + 生长茎
-  layerHeader: { display: 'flex', gap: 12, marginBottom: 16, paddingBottom: 12, borderBottom: '1px solid var(--rule-soft)' },
+  // 阅读区:max-width 680(中文长行 40-55 字舒适),上下加大呼吸
+  scrollWrap: { maxWidth: 680, margin: '0 auto', padding: '32px 36px 56px', width: '100%' },
+  // 空态:加一根短茎暗示"等一个问题落下"
+  empty: { flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: 48, background: 'var(--paper)', gap: 14 },
+  emptyStem: { width: 3, height: 28, borderRadius: 2, background: 'var(--rule)', marginBottom: 4 },
+  emptyTitle: { fontFamily: 'var(--serif)', fontSize: 20, color: 'var(--ink)', fontWeight: 600, letterSpacing: '0.01em' },
+  emptyDesc: { fontSize: 13.5, color: 'var(--ink-soft)', lineHeight: 1.75, textAlign: 'center', maxWidth: 380, fontFamily: 'var(--serif)' },
+  emptyHint: { marginTop: 4, fontSize: 11.5, color: 'var(--ink-faint)', fontFamily: 'var(--mono)', letterSpacing: '0.04em' },
+  // 层标题 + 生长茎(签名):茎 4px 宽,带呼吸光晕,顶部一颗节点
+  layerHeader: { display: 'flex', gap: 14, marginBottom: 20, paddingBottom: 16, borderBottom: '1px solid var(--rule-soft)' },
   stem: {
-    width: 3, flexShrink: 0, borderRadius: 2, alignSelf: 'stretch', minHeight: 32,
-    background: 'var(--active)', animation: 'stemBreath 2.5s ease-in-out infinite',
+    width: 4, flexShrink: 0, borderRadius: 2, alignSelf: 'stretch', minHeight: 36,
+    background: 'linear-gradient(180deg, var(--active) 0%, rgba(43,95,138,0.25) 100%)',
+    animation: 'stemBreath 2.6s ease-in-out infinite', position: 'relative',
+  },
+  stemNode: {
+    position: 'absolute', top: -2, left: '50%', transform: 'translateX(-50%)',
+    width: 8, height: 8, borderRadius: '50%', background: 'var(--active)',
+    boxShadow: '0 0 0 3px var(--active-soft)',
   },
   layerMeta: { display: 'flex', alignItems: 'baseline', gap: 10, flex: 1, flexWrap: 'wrap' },
   depthTag: {
     fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--active)',
     background: 'var(--active-soft)', borderRadius: 'var(--r-sm)', padding: '2px 8px',
+    letterSpacing: '0.04em', flexShrink: 0,
   },
   layerQ: {
-    fontFamily: 'var(--serif)', fontSize: 17, fontWeight: 600, color: 'var(--ink)',
-    lineHeight: 1.3, flex: 1,
+    fontFamily: 'var(--serif)', fontSize: 18, fontWeight: 600, color: 'var(--ink)',
+    lineHeight: 1.4, flex: 1, margin: 0, letterSpacing: '0.005em',
   },
   loadingDot: {
     width: 6, height: 6, borderRadius: '50%', background: 'var(--active)',
-    animation: 'pulse 1.4s ease-in-out infinite', alignSelf: 'center',
+    animation: 'pulse 1.4s ease-in-out infinite', alignSelf: 'center', flexShrink: 0,
   },
-  // 回答正文
-  answer: { fontSize: 14.5, lineHeight: 1.85, color: 'var(--ink)', fontFamily: 'var(--sans)' },
-  articleInner: { whiteSpace: 'pre-wrap', position: 'relative' },
-  generating: { color: 'var(--ink-soft)', fontStyle: 'italic' },
+  // 正文:衬线 15px / 行高 1.9 / 字距 0.01em —— 书本感
+  answer: {
+    fontSize: 'var(--fs-body)', lineHeight: 'var(--lh-body)', color: 'var(--ink-read)',
+    fontFamily: 'var(--serif)', letterSpacing: 'var(--tracking-body)',
+    textRendering: 'optimizeLegibility', WebkitFontSmoothing: 'antialiased',
+  },
+  articleInner: { whiteSpace: 'pre-wrap', position: 'relative', wordBreak: 'break-word' },
+  generating: { color: 'var(--ink-soft)', fontStyle: 'italic', fontFamily: 'var(--serif)', fontSize: 'var(--fs-body)' },
   inline: {
-    cursor: 'pointer', fontWeight: 500, position: 'relative',
-    transition: 'color 0.15s',
+    fontWeight: 500, position: 'relative',
+    transition: 'color 0.15s, text-decoration-color 0.15s',
   },
   tooltip: {
     position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)',
     background: 'var(--ink)', color: 'var(--paper)', fontSize: 10,
     padding: '3px 8px', borderRadius: 'var(--r-sm)', whiteSpace: 'nowrap',
-    fontFamily: 'var(--mono)', marginBottom: 4, pointerEvents: 'none',
+    fontFamily: 'var(--mono)', marginBottom: 6, pointerEvents: 'none',
+    boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
   },
-  // 层摘要
+  // 层摘要:陶土棕左边线 + "摘"字标记,衬线斜体,视觉层级介于正文与脚注间
   layerSummary: {
-    fontFamily: 'var(--serif)', fontSize: 13, fontStyle: 'italic',
-    color: 'var(--ink-soft)', margin: '20px 0 0', padding: '10px 14px',
-    background: 'var(--paper-soft)', borderRadius: 'var(--r-sm)',
-    borderLeft: '2px solid var(--settled)', lineHeight: 1.6,
+    display: 'flex', gap: 10, alignItems: 'flex-start',
+    fontFamily: 'var(--serif)', fontSize: 13.5, fontStyle: 'italic',
+    color: 'var(--ink-soft)', margin: '24px 0 0', padding: '12px 16px',
+    background: 'var(--paper-warm)', borderRadius: 'var(--r-md)',
+    borderLeft: '3px solid var(--settled)', lineHeight: 1.7,
   },
+  summaryMark: {
+    fontFamily: 'var(--serif)', fontSize: 13, color: 'var(--settled)',
+    background: 'var(--settled-soft)', borderRadius: 'var(--r-sm)',
+    padding: '0 6px', flexShrink: 0, lineHeight: 1.9, fontStyle: 'normal',
+  },
+  summaryText: { flex: 1 },
   // 未匹配概念块
-  unmatchedBlock: { marginTop: 20, padding: '10px 14px', background: 'var(--paper-soft)', borderRadius: 'var(--r-sm)' },
+  unmatchedBlock: { marginTop: 20, padding: '10px 14px', background: 'var(--paper-soft)', borderRadius: 'var(--r-md)' },
   unmatchedLabel: {
     fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink-faint)',
     textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8,
@@ -355,7 +401,7 @@ const styles = {
     borderRadius: 'var(--r-sm)', fontFamily: 'var(--sans)', fontWeight: 500,
   },
   hint: {
-    marginTop: 24, fontSize: 11, color: 'var(--ink-faint)', textAlign: 'center',
+    marginTop: 28, fontSize: 11, color: 'var(--ink-faint)', textAlign: 'center',
     fontFamily: 'var(--mono)', letterSpacing: '0.04em',
   },
 }

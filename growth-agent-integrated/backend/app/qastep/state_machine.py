@@ -128,8 +128,14 @@ class QAStepPipeline:
                 await self.repo.append_answer(self.qa_id, ev["text"])  # checkpoint 落盘
                 yield {"type": "answer_delta", "text": ev["text"]}
             elif kind == "sentinel":
-                # 正文已全部流出，进入 extracting
-                await self.repo.transition(self.qa_id, QAStatus.EXTRACTING)
+                # 正文已全部流出，进入 extracting（幂等：已是 EXTRACTING 则跳过）
+                from app.db import session_scope
+                from sqlalchemy import select as _sel
+                from app.models.tables import QAStep as _QS
+                async with session_scope() as _s:
+                    cur = (await _s.execute(_sel(_QS.status).where(_QS.qa_id == self.qa_id))).scalar_one_or_none()
+                if cur != QAStatus.EXTRACTING.value:
+                    await self.repo.transition(self.qa_id, QAStatus.EXTRACTING)
                 yield {"type": "status", "status": QAStatus.EXTRACTING.value}
             elif kind == "json_done":
                 concept_block = ev["block"]

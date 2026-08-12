@@ -9,7 +9,10 @@ const state = {
   sessionId: null,
   activeSessionId: null,  // 当前概念图所属会话
   // 探索栈：每层 { qa_id, question, answer, status, concepts, loading }
+  // stack 永远保留全部探索历史，回上层不删层
   stack: [],
+  // 当前查看的层索引（默认栈顶）。回上层只移动它，不删 stack。
+  currentIdx: -1,
   // 在途互斥：正在流式的 qa_id（其它操作禁用）
   inflight: null,
   // 概念图数据
@@ -22,6 +25,13 @@ function emit() { listeners.forEach((l) => l()) }
 function set(partial) { Object.assign(state, partial); emit() }
 
 export function getState() { return state }
+// 当前层（栈顶或 currentIdx 指向的层）
+export function getCurrentLayer() {
+  if (state.currentIdx >= 0 && state.currentIdx < state.stack.length) {
+    return state.stack[state.currentIdx]
+  }
+  return state.stack[state.stack.length - 1]
+}
 
 // 在途互斥检查
 export function isInflight(qaId) { return state.inflight === qaId }
@@ -33,7 +43,12 @@ export function guardAction(qaId) {
 }
 
 export function pushLayer(layer) {
-  set({ stack: [...state.stack, layer], inflight: layer.qa_id })
+  // 下钻：新层入栈，currentIdx 指向新层（栈顶）
+  set({ stack: [...state.stack, layer], currentIdx: state.stack.length, inflight: layer.qa_id })
+}
+// 开新树：清空旧探索栈，重置 currentIdx
+export function resetStack() {
+  set({ stack: [], currentIdx: -1, inflight: null })
 }
 export function setActiveSession(sid) { set({ activeSessionId: sid }) }
 export function updateLayer(qaId, patch) {
@@ -49,11 +64,11 @@ export function setLastViewed(qaId, conceptId) {
     ),
   })
 }
+// 出口2：回上层——只切 currentIdx，保留所有探索历史（不删层）
 export function popToLayer(qaId) {
-  // 出口2：栈式回退到指定层，保留该层及以下（状态保留）
   const idx = state.stack.findIndex((l) => l.qa_id === qaId)
   if (idx < 0) return
-  set({ stack: state.stack.slice(0, idx + 1), inflight: null })
+  set({ currentIdx: idx, inflight: null })
 }
 export function clearInflight() { set({ inflight: null }) }
 
