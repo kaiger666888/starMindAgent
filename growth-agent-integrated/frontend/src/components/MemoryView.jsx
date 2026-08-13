@@ -125,7 +125,7 @@ export default function MemoryView() {
   )
 }
 
-// 画像卡：summary 衬线大字 + recommendation 突出 + 三列概念诊断
+// 画像卡:summary 衬线大字 + recommendation 突出 + 三列概念诊断
 function ProfileCard({ profile, refreshing, onRefresh, loading }) {
   if (loading) {
     return <div style={s.card}><div style={s.empty}>正在汇总学习画像…</div></div>
@@ -247,17 +247,16 @@ function SessionItem({ sess, idx, expanded, onToggle }) {
   )
 }
 
-// Signature：学习曲线。根据 qa_count 画一条细线，隐喻成长轨迹。
+// Signature:学习曲线。根据 qa_count 画一条细线,隐喻成长轨迹。
 function GrowthCurve({ qaCount }) {
   const path = useMemo(() => {
-    // 用确定性伪随机生成一条上升+波动的曲线，长度固定但振幅随 qaCount 增长
     const pts = []
     const W = 100, H = 24
     const amp = Math.min(8, 2 + qaCount * 0.5)
     for (let i = 0; i <= 20; i++) {
       const x = (i / 20) * W
       const noise = Math.sin(i * 1.3 + qaCount * 0.7) * amp
-      const trend = (i / 20) * (H - 4) // 整体上升
+      const trend = (i / 20) * (H - 4)
       const y = H - 2 - trend * 0.4 + noise * 0.3
       pts.push(`${x.toFixed(2)},${y.toFixed(2)}`)
     }
@@ -286,110 +285,115 @@ function truncate(s, n) {
   return s.length > n ? s.slice(0, n) + '…' : s
 }
 
+// 概念诊断三栏:统一用 token 色彩,弱化饱和度,与档案陶土棕基调协调
 const chipTone = {
-  mastered: { background: '#E8DCCD', color: '#5C3A1F', borderColor: '#C9B89E' },
-  weak: { background: '#FBEEE0', color: '#8B5A3C', borderColor: '#D4A574' },
-  interest: { background: '#EFEBE3', color: '#5B6359', borderColor: '#C7C0B0' },
+  mastered: { background: 'var(--settled-soft)', color: 'var(--settled)', borderColor: '#C9B89E' },
+  weak: { background: '#FBEEE0', color: 'var(--settled)', borderColor: '#D4A574' },
+  interest: { background: 'var(--paper-warm)', color: 'var(--ink-soft)', borderColor: '#C7C0B0' },
 }
 
 const s = {
   wrap: {
-    maxWidth: 720, margin: '0 auto', padding: '24px 20px 48px',
-    color: 'var(--mem-ink, #1F2421)',
-    fontFamily: '-apple-system, "Segoe UI", "PingFang SC", sans-serif',
+    maxWidth: 720, margin: '0 auto', padding: '32px 24px 56px',
+    color: 'var(--ink-read)',
+    fontFamily: 'var(--sans)',
     lineHeight: 1.6,
   },
-  curve: { color: '#8B5A3C', opacity: 0.4, marginBottom: 8, height: 24 },
+  curve: { color: 'var(--settled)', opacity: 0.4, marginBottom: 8, height: 24 },
   curveSvg: { width: '100%', height: '100%', display: 'block' },
-  header: { display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4 },
+  header: { display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 6 },
   title: {
-    fontFamily: '"Georgia", "Songti SC", serif',
-    fontSize: 28, fontWeight: 400, margin: 0, letterSpacing: '0.01em',
+    fontFamily: 'var(--serif)', fontSize: 28, fontWeight: 600, margin: 0, letterSpacing: '0.01em',
+    color: 'var(--ink)',
   },
-  uid: { fontFamily: '"JetBrains Mono", monospace', fontSize: 12, color: '#5B6359' },
+  uid: { fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--ink-soft)' },
   uidRow: { display: 'flex', gap: 6, marginBottom: 20 },
   uidInput: {
-    flex: 1, padding: '5px 8px', fontSize: 12,
-    border: '1px solid #D9D2C5', borderRadius: 4, background: '#fff',
-    fontFamily: '"JetBrains Mono", monospace',
+    flex: 1, padding: '6px 10px', fontSize: 12,
+    border: '1px solid var(--rule)', borderRadius: 'var(--r-sm)', background: 'var(--paper)',
+    fontFamily: 'var(--mono)', color: 'var(--ink)', outline: 'none',
   },
   uidBtn: {
-    padding: '5px 10px', fontSize: 12, background: 'transparent', color: '#8B5A3C',
-    border: '1px solid #8B5A3C', borderRadius: 4, cursor: 'pointer',
+    padding: '6px 12px', fontSize: 12, background: 'transparent', color: 'var(--settled)',
+    border: '1px solid var(--settled)', borderRadius: 'var(--r-sm)', cursor: 'pointer',
+    fontFamily: 'var(--sans)', transition: 'all 0.15s',
   },
   error: {
     padding: '8px 12px', marginBottom: 16, fontSize: 13,
-    background: '#FBEEE0', color: '#8B5A3C', borderRadius: 4,
-    borderLeft: '3px solid #8B5A3C',
+    background: 'var(--danger-soft)', color: 'var(--danger)', borderRadius: 'var(--r-sm)',
+    borderLeft: '3px solid var(--danger)',
+    fontFamily: 'var(--sans)',
   },
   card: {
-    background: '#FAF8F3', border: '1px solid #D9D2C5', borderRadius: 6,
-    padding: '20px 22px', marginBottom: 24,
+    background: 'var(--paper)', border: '1px solid var(--rule)', borderRadius: 'var(--r-md)',
+    padding: '22px 24px', marginBottom: 28, boxShadow: '0 1px 3px rgba(0,0,0,0.03)',
   },
-  cardHead: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12, flexWrap: 'wrap', gap: 8 },
+  cardHead: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 14, flexWrap: 'wrap', gap: 8 },
   cardLabel: {
-    fontFamily: '"JetBrains Mono", monospace', fontSize: 11,
-    color: '#8B5A3C', textTransform: 'uppercase', letterSpacing: '0.08em',
+    fontFamily: 'var(--mono)', fontSize: 11,
+    color: 'var(--settled)', textTransform: 'uppercase', letterSpacing: '0.08em',
   },
-  cardMeta: { fontSize: 12, color: '#5B6359', fontFamily: '"JetBrains Mono", monospace' },
-  stale: { color: '#A8763B' },
+  cardMeta: { fontSize: 12, color: 'var(--ink-soft)', fontFamily: 'var(--mono)' },
+  stale: { color: 'var(--settled)' },
   summary: {
-    fontFamily: '"Georgia", "Songti SC", serif', fontSize: 17, lineHeight: 1.65,
-    margin: '0 0 16px', color: '#1F2421',
+    fontFamily: 'var(--serif)', fontSize: 16.5, lineHeight: 1.7,
+    margin: '0 0 16px', color: 'var(--ink-read)', letterSpacing: '0.01em',
   },
   recommendBox: {
-    display: 'flex', gap: 10, padding: '10px 14px', marginBottom: 18,
-    background: '#fff', borderLeft: '3px solid #8B5A3C', borderRadius: 2,
+    display: 'flex', gap: 12, padding: '12px 16px', marginBottom: 20,
+    background: 'var(--paper-warm)', borderLeft: '3px solid var(--settled)', borderRadius: 'var(--r-sm)',
   },
   recommendLabel: {
-    fontFamily: '"JetBrains Mono", monospace', fontSize: 11, color: '#8B5A3C',
+    fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--settled)',
     textTransform: 'uppercase', letterSpacing: '0.08em', flexShrink: 0, paddingTop: 2,
   },
-  recommendText: { fontSize: 14, color: '#1F2421' },
-  conceptGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 18 },
+  recommendText: { fontSize: 14, color: 'var(--ink-read)', fontFamily: 'var(--sans)', lineHeight: 1.6 },
+  conceptGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 18, marginBottom: 20 },
   conceptCol: {},
   conceptColTitle: {
-    fontFamily: '"JetBrains Mono", monospace', fontSize: 11, color: '#5B6359',
-    marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.06em',
-    borderBottom: '1px solid #D9D2C5', paddingBottom: 4,
+    fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-soft)',
+    marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.06em',
+    borderBottom: '1px solid var(--rule-soft)', paddingBottom: 5,
   },
   chipRow: { display: 'flex', flexWrap: 'wrap', gap: 4 },
-  chip: { fontSize: 12, padding: '2px 8px', borderRadius: 10, border: '1px solid' },
-  conceptEmpty: { fontSize: 12, color: '#9A9388', fontFamily: '"JetBrains Mono", monospace' },
+  chip: { fontSize: 12, padding: '2px 8px', borderRadius: 10, border: '1px solid', fontFamily: 'var(--sans)' },
+  conceptEmpty: { fontSize: 12, color: 'var(--ink-faint)', fontFamily: 'var(--mono)' },
   refreshBtn: {
-    padding: '6px 14px', fontSize: 12, background: '#8B5A3C', color: '#FAF8F3',
-    border: 'none', borderRadius: 4, cursor: 'pointer',
+    padding: '7px 16px', fontSize: 12, background: 'var(--settled)', color: 'var(--paper)',
+    border: 'none', borderRadius: 'var(--r-sm)', cursor: 'pointer',
+    fontFamily: 'var(--sans)', fontWeight: 500, transition: 'opacity 0.15s',
   },
-  lastAt: { marginTop: 8, fontSize: 11, color: '#9A9388', fontFamily: '"JetBrains Mono", monospace' },
+  lastAt: { marginTop: 10, fontSize: 11, color: 'var(--ink-faint)', fontFamily: 'var(--mono)' },
   section: { marginBottom: 24 },
   sectionLabel: {
-    fontFamily: '"JetBrains Mono", monospace', fontSize: 11, color: '#8B5A3C',
-    textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12,
-    borderBottom: '1px solid #D9D2C5', paddingBottom: 4,
+    fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--settled)',
+    textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 14,
+    borderBottom: '1px solid var(--rule-soft)', paddingBottom: 5,
   },
-  empty: { fontSize: 14, color: '#5B6359', lineHeight: 1.7, padding: '12px 0' },
+  empty: { fontSize: 14, color: 'var(--ink-soft)', lineHeight: 1.75, padding: '12px 0', fontFamily: 'var(--serif)' },
   timeline: { listStyle: 'none', padding: 0, margin: 0 },
-  timelineItem: { borderBottom: '1px solid #E8E1D3' },
+  timelineItem: { borderBottom: '1px solid var(--rule-soft)' },
   timelineBtn: {
-    width: '100%', display: 'flex', alignItems: 'center', gap: 12, padding: '12px 4px',
+    width: '100%', display: 'flex', alignItems: 'center', gap: 12, padding: '14px 4px',
     background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left',
-    color: 'inherit', fontFamily: 'inherit',
+    color: 'inherit', fontFamily: 'inherit', transition: 'background 0.15s',
   },
-  timelineDate: { fontFamily: '"JetBrains Mono", monospace', fontSize: 11, color: '#9A9388', flexShrink: 0, width: 110 },
-  timelineQ: { flex: 1, fontSize: 14, color: '#1F2421' },
-  timelineCount: { fontFamily: '"JetBrains Mono", monospace', fontSize: 11, color: '#5B6359' },
+  timelineDate: { fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-faint)', flexShrink: 0, width: 110 },
+  timelineQ: { flex: 1, fontSize: 14, color: 'var(--ink-read)', fontFamily: 'var(--serif)', lineHeight: 1.4 },
+  timelineCount: { fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--ink-soft)' },
   timelineDomain: {
-    fontFamily: '"JetBrains Mono", monospace', fontSize: 10, color: '#8B5A3C',
-    background: '#E8DCCD', padding: '1px 6px', borderRadius: 8,
+    fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--settled)',
+    background: 'var(--settled-soft)', padding: '1px 6px', borderRadius: 8,
   },
-  chevron: { color: '#9A9388', fontSize: 16, flexShrink: 0 },
-  timelineDetail: { padding: '4px 0 12px 110px' },
-  stepRow: { display: 'flex', gap: 8, padding: '6px 0', borderLeft: '1px dotted #D9D2C5', paddingLeft: 8 },
+  chevron: { color: 'var(--ink-faint)', fontSize: 16, flexShrink: 0, fontFamily: 'var(--mono)' },
+  timelineDetail: { padding: '4px 0 14px 110px' },
+  stepRow: { display: 'flex', gap: 10, padding: '7px 0', borderLeft: '1px dotted var(--rule)', paddingLeft: 10 },
   stepDepth: {
-    fontFamily: '"JetBrains Mono", monospace', fontSize: 10, color: '#8B5A3C',
-    background: '#E8DCCD', borderRadius: 3, padding: '0 4px', height: 16, flexShrink: 0,
+    fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--settled)',
+    background: 'var(--settled-soft)', borderRadius: 3, padding: '0 5px', height: 16, flexShrink: 0,
+    display: 'inline-flex', alignItems: 'center',
   },
   stepBody: { flex: 1, minWidth: 0 },
-  stepQ: { fontSize: 13, color: '#1F2421', fontWeight: 500 },
-  stepA: { fontSize: 12, color: '#5B6359', marginTop: 2, lineHeight: 1.5 },
+  stepQ: { fontSize: 13, color: 'var(--ink-read)', fontWeight: 500, fontFamily: 'var(--serif)' },
+  stepA: { fontSize: 12, color: 'var(--ink-soft)', marginTop: 3, lineHeight: 1.55, fontFamily: 'var(--serif)' },
 }

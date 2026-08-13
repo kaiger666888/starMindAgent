@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react'
 import * as api from '../api/client'
-import { useStore, updateLayer, clearInflight, setLastViewed, guardAction, goBack, findNode } from '../store/qaStore'
+import { useStore, updateLayer, clearInflight, setLastViewed, guardAction, goBack, goForward, findNode } from '../store/qaStore'
 import { renderMarkdown } from './markdownRenderer.jsx'
 import ReaderControls from './ReaderControls'
 
@@ -26,15 +26,21 @@ export default function ReadingPane() {
   const currentPath = useStore((s) => s.currentPath)
   const inflight = useStore((s) => s.inflight)
   const activeSid = useStore((s) => s.activeSessionId)
+  // 订阅历史指针,派生前进/后退可用性(historyIdx 变化时组件重渲染)
+  const historyIdx = useStore((s) => s.historyIdx)
+  const historyLen = useStore((s) => s.history.length)
+  const canBack = historyIdx > 0
+  const canForward = historyIdx < historyLen - 1
 
   // 当前层 = currentPath 末尾节点（树状分支结构）
   const current = currentPath.length > 0 ? findNode(currentPath[currentPath.length - 1]) : null
 
-  // 键盘翻页:Alt+← 后退(沿 path 向上)
+  // 键盘翻页:Alt+← 后退 / Alt+→ 前进(在浏览历史里移动)
   useEffect(() => {
     const onKey = (e) => {
       if (!e.altKey) return
       if (e.key === 'ArrowLeft') { e.preventDefault(); goBack() }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); goForward() }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -55,18 +61,20 @@ export default function ReadingPane() {
   }
 
   const depth = currentPath.length
-  const canBack = currentPath.length > 1
   return (
     <ReadingLayer
       layer={current}
       depth={depth}
       inflight={inflight}
       canBack={canBack}
+      canForward={canForward}
+      historyIdx={historyIdx}
+      historyLen={historyLen}
     />
   )
 }
 
-function ReadingLayer({ layer, depth, inflight, canBack }) {
+function ReadingLayer({ layer, depth, inflight, canBack, canForward, historyIdx, historyLen }) {
   // concepts 用于:正文 markdown 渲染时做内联概念切分(可下钻) + unmatched 提示
   const concepts = layer.concepts || []
   // buildInlineSegments 只为拿 unmatched(渲染逻辑独立,匹配规则与渲染器一致)
@@ -86,14 +94,23 @@ function ReadingLayer({ layer, depth, inflight, canBack }) {
           </div>
           <div style={styles.layerMeta}>
             <span style={styles.depthTag}>第 {depth} 层</span>
-            {canBack && (
+            {(canBack || canForward) && (
               <div style={styles.pager} aria-label="探索历史翻页">
                 <button
-                  style={styles.pageBtn}
+                  style={{ ...styles.pageBtn, ...(!canBack ? styles.pageBtnDisabled : {}) }}
                   onClick={goBack}
-                  title="上一层"
-                  aria-label="上一层"
+                  disabled={!canBack}
+                  title={canBack ? '后退' : '已是最早一页'}
+                  aria-label="后退"
                 >‹</button>
+                <span style={styles.pageCount}>{historyIdx + 1} / {historyLen}</span>
+                <button
+                  style={{ ...styles.pageBtn, ...(!canForward ? styles.pageBtnDisabled : {}) }}
+                  onClick={goForward}
+                  disabled={!canForward}
+                  title={canForward ? '前进' : '已是最新一页'}
+                  aria-label="前进"
+                >›</button>
               </div>
             )}
             <h1 style={styles.layerQ}>{layer.question}</h1>
@@ -374,6 +391,15 @@ const styles = {
     width: 22, height: 22, border: 'none', background: 'transparent',
     cursor: 'pointer', color: 'var(--active)', fontFamily: 'var(--serif)',
     fontSize: 16, lineHeight: 1, padding: 0, transition: 'background 0.15s, color 0.15s',
+  },
+  pageBtnDisabled: {
+    color: 'var(--ink-faint)', cursor: 'not-allowed', opacity: 0.45,
+  },
+  pageCount: {
+    fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--ink-soft)',
+    padding: '0 8px', minWidth: 38, textAlign: 'center', letterSpacing: '0.04em',
+    borderLeft: '1px solid var(--rule-soft)', borderRight: '1px solid var(--rule-soft)',
+    lineHeight: '22px',
   },
   layerQ: {
     fontFamily: 'var(--serif)', fontSize: 18, fontWeight: 600, color: 'var(--ink)',

@@ -31,7 +31,7 @@ function tierForCount(c) {
 export default function ConceptGraph() {
   const cyRef = useRef(null)
   const containerRef = useRef(null)
-  const stack = useStore((s) => s.stack)
+  const currentPath = useStore((s) => s.currentPath)
   const activeSid = useStore((s) => s.activeSessionId)
   const [view, setView] = useState('user_click')  // 当前状态视图
   const [scope, setScope] = useState('session')    // session | global
@@ -136,7 +136,7 @@ export default function ConceptGraph() {
     }
   }
 
-  useEffect(() => { loadGraph() }, [activeSid, stack.length, view, scope])
+  useEffect(() => { loadGraph() }, [activeSid, currentPath.length, view, scope])
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -228,7 +228,7 @@ export default function ConceptGraph() {
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, position: 'relative' }}>
-      <div style={styles.toolbar}>
+      <div style={styles.toolbarTop}>
         <div style={styles.viewSwitch}>
           {VIEWS.map((v) => (
             <button
@@ -241,12 +241,6 @@ export default function ConceptGraph() {
             </button>
           ))}
         </div>
-        <input
-          style={styles.search}
-          value={search}
-          onChange={(e) => onSearch(e.target.value)}
-          placeholder="搜索已探索概念…"
-        />
         <div style={styles.scopeSwitch}>
           <button
             style={{ ...styles.scopeBtn, ...(scope === 'session' ? styles.scopeBtnActive : {}) }}
@@ -259,9 +253,24 @@ export default function ConceptGraph() {
           >全局</button>
         </div>
       </div>
+      <div style={styles.toolbarBottom}>
+        <input
+          style={styles.search}
+          value={search}
+          onChange={(e) => onSearch(e.target.value)}
+          placeholder="搜索已探索概念…"
+        />
+        <div style={styles.legend}>
+          <span style={styles.legendItem}><i style={{ ...styles.dot, background: TIER_FILL.gray }} />未探索</span>
+          <span style={styles.legendItem}><i style={{ ...styles.dot, background: TIER_FILL.green }} />1次</span>
+          <span style={styles.legendItem}><i style={{ ...styles.dot, background: TIER_FILL.red_1 }} />回访</span>
+          <span style={styles.legendItem}><i style={{ ...styles.dot, background: TIER_FILL.red_3 }} />反复</span>
+          <span style={styles.legendItem}><i style={{ ...styles.dot, background: '#e5e7eb', opacity: 0.5 }} />已理解</span>
+        </div>
+      </div>
       <div style={styles.viewDesc}>
-        {currentViewObj?.desc}
-        <span style={{ marginLeft: 12, color: '#9ca3af' }}>Shift+点击两个概念节点可手动合并</span>
+        <span>{currentViewObj?.desc}</span>
+        <span style={styles.viewHint}>Shift+点击两节点可手动合并</span>
       </div>
       {selectedForMerge.length > 0 && (
         <div style={styles.mergeBar}>
@@ -272,13 +281,6 @@ export default function ConceptGraph() {
           <button style={styles.clearBtn} onClick={clearMergeSelection}>取消</button>
         </div>
       )}
-      <div style={styles.legend}>
-        <span style={styles.legendItem}><i style={{ ...styles.dot, background: TIER_FILL.gray }} />未探索</span>
-        <span style={styles.legendItem}><i style={{ ...styles.dot, background: TIER_FILL.green }} />探索1次</span>
-        <span style={styles.legendItem}><i style={{ ...styles.dot, background: TIER_FILL.red_1 }} />2次(回访)</span>
-        <span style={styles.legendItem}><i style={{ ...styles.dot, background: TIER_FILL.red_3 }} />反复(下钻)</span>
-        <span style={styles.legendItem}><i style={{ ...styles.dot, background: '#e5e7eb', opacity: 0.5 }} />已理解</span>
-      </div>
       <div ref={containerRef} style={styles.canvas} />
       {loadingExt && <div style={styles.loading}>正在扩展关联概念…</div>}
     </div>
@@ -286,21 +288,51 @@ export default function ConceptGraph() {
 }
 
 const styles = {
-  toolbar: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', borderBottom: '1px solid #e5e7eb', gap: 8, flexWrap: 'wrap' },
-  viewSwitch: { display: 'flex', gap: 4 },
-  viewBtn: { padding: '4px 10px', fontSize: 12, background: 'var(--paper-soft)', color: 'var(--ink-soft)', border: '1px solid var(--rule-soft)', borderRadius: 'var(--r-sm)', cursor: 'pointer', fontFamily: 'var(--sans)' },
+  toolbarTop: {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    padding: '8px 12px 6px', borderBottom: '1px solid var(--rule-soft)', gap: 8, flexWrap: 'wrap',
+  },
+  toolbarBottom: {
+    display: 'flex', alignItems: 'center', gap: 12,
+    padding: '6px 12px 8px', borderBottom: '1px solid var(--rule-soft)', flexWrap: 'wrap',
+  },
+  viewSwitch: { display: 'flex', gap: 2, flexWrap: 'wrap' },
+  viewBtn: {
+    padding: '4px 10px', fontSize: 11, background: 'var(--paper)', color: 'var(--ink-soft)',
+    border: '1px solid var(--rule-soft)', borderRadius: 'var(--r-sm)', cursor: 'pointer',
+    fontFamily: 'var(--sans)', transition: 'all 0.15s',
+  },
   viewBtnActive: { background: 'var(--active)', color: '#fff', borderColor: 'var(--active)' },
-  search: { padding: '5px 10px', fontSize: 12, border: '1px solid var(--rule)', borderRadius: 'var(--r-sm)', width: 150, fontFamily: 'var(--sans)', background: 'var(--paper)', color: 'var(--ink)' },
+  search: {
+    padding: '5px 10px', fontSize: 12, border: '1px solid var(--rule)', borderRadius: 'var(--r-sm)',
+    width: 160, fontFamily: 'var(--sans)', background: 'var(--paper)', color: 'var(--ink)', outline: 'none',
+  },
   scopeSwitch: { display: 'flex', gap: 2, background: 'var(--paper-soft)', borderRadius: 'var(--r-sm)', padding: 2 },
-  scopeBtn: { padding: '3px 8px', fontSize: 11, background: 'transparent', color: 'var(--ink-soft)', border: 'none', borderRadius: 3, cursor: 'pointer', fontFamily: 'var(--mono)' },
+  scopeBtn: {
+    padding: '3px 10px', fontSize: 11, background: 'transparent', color: 'var(--ink-soft)',
+    border: 'none', borderRadius: 3, cursor: 'pointer', fontFamily: 'var(--mono)', transition: 'all 0.15s',
+  },
   scopeBtnActive: { background: 'var(--paper)', color: 'var(--ink)', boxShadow: '0 1px 2px rgba(0,0,0,0.06)' },
-  viewDesc: { fontSize: 11, color: 'var(--ink-faint)', padding: '4px 12px', fontStyle: 'italic', fontFamily: 'var(--sans)' },
-  legend: { display: 'flex', gap: 12, padding: '4px 12px', fontSize: 11, color: 'var(--ink-soft)', flexWrap: 'wrap', fontFamily: 'var(--mono)' },
-  legendItem: { display: 'inline-flex', alignItems: 'center', gap: 4 },
-  dot: { width: 10, height: 10, borderRadius: '50%', display: 'inline-block' },
+  viewDesc: {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8,
+    fontSize: 10.5, color: 'var(--ink-faint)', padding: '5px 12px 6px',
+    fontStyle: 'italic', fontFamily: 'var(--serif)', borderBottom: '1px solid var(--rule-soft)',
+  },
+  viewHint: { fontStyle: 'normal', fontFamily: 'var(--mono)', fontSize: 9.5, color: 'var(--ink-faint)', letterSpacing: '0.04em' },
+  legend: { display: 'flex', gap: 10, fontSize: 10, color: 'var(--ink-soft)', flexWrap: 'wrap', fontFamily: 'var(--mono)' },
+  legendItem: { display: 'inline-flex', alignItems: 'center', gap: 3 },
+  dot: { width: 9, height: 9, borderRadius: '50%', display: 'inline-block' },
   canvas: { flex: 1, minHeight: 300, background: 'var(--paper)' },
-  loading: { position: 'absolute', top: 80, right: 20, padding: '4px 10px', background: 'var(--paper)', border: '1px solid var(--rule)', borderRadius: 'var(--r-sm)', fontSize: 12, color: 'var(--ink-soft)' },
-  mergeBar: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', background: 'var(--danger-soft)', borderBottom: '1px solid var(--danger)', fontSize: 12, color: 'var(--danger)', fontFamily: 'var(--sans)' },
+  loading: {
+    position: 'absolute', top: 80, right: 20, padding: '4px 10px',
+    background: 'var(--paper)', border: '1px solid var(--rule)', borderRadius: 'var(--r-sm)',
+    fontSize: 12, color: 'var(--ink-soft)', fontFamily: 'var(--sans)',
+  },
+  mergeBar: {
+    display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px',
+    background: 'var(--danger-soft)', borderBottom: '1px solid var(--danger)',
+    fontSize: 12, color: 'var(--danger)', fontFamily: 'var(--sans)',
+  },
   mergeBtn: { padding: '3px 10px', fontSize: 12, background: 'var(--danger)', color: '#fff', border: 'none', borderRadius: 'var(--r-sm)', cursor: 'pointer' },
   clearBtn: { padding: '3px 10px', fontSize: 12, background: 'transparent', color: 'var(--danger)', border: '1px solid var(--danger)', borderRadius: 'var(--r-sm)', cursor: 'pointer' },
 }
