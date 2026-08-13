@@ -8,8 +8,8 @@ import {
 const MAX_DEPTH = 6
 
 export default function TreeView() {
-  const stack = useStore((s) => s.stack)
-  const currentIdx = useStore((s) => s.currentIdx)
+  const tree = useStore((s) => s.tree)
+  const currentPath = useStore((s) => s.currentPath)
   const inflight = useStore((s) => s.inflight)
   const [question, setQuestion] = useState('')
 
@@ -57,7 +57,7 @@ export default function TreeView() {
         <button style={styles.btn} onClick={startNewTree} disabled={!!inflight}>开新树</button>
       </div>
 
-      {stack.length === 0 && (
+      {!tree && (
         <div style={styles.empty}>
           <div style={styles.emptyStem} aria-hidden="true" />
           <div>提一个问题，让概念生长成树</div>
@@ -65,37 +65,64 @@ export default function TreeView() {
       )}
 
       <nav style={styles.tree} aria-label="探索树">
-        {stack.map((layer, idx) => {
-          const isCurrent = idx === currentIdx
-          const hasBelow = idx < stack.length - 1
-          // 茎连续性:每层左侧一根竖线,当前层加粗+墨蓝,历史层细+发丝色
-          const stemColor = isCurrent ? 'var(--active)' : hasBelow ? 'var(--rule)' : 'transparent'
-          return (
-            <button
-              key={layer.qa_id}
-              style={{
-                ...styles.layerBtn,
-                marginLeft: idx * 14,
-                borderLeft: `2px solid ${stemColor}`,
-                background: isCurrent ? 'var(--active-soft)' : 'transparent',
-                opacity: isCurrent ? 1 : 0.72,
-              }}
-              onClick={() => popToLayer(layer.qa_id)}
-              title={isCurrent ? '当前层' : '点击回到这层'}
-            >
-              <div style={styles.layerHead}>
-                <span style={styles.depthTag}>L{idx + 1}</span>
-                <span style={styles.q}>{layer.question}</span>
-                {layer.loading && <span style={styles.loadingDot} />}
-              </div>
-              {layer.layer_summary && (
-                <div style={styles.preview}>{layer.layer_summary}</div>
-              )}
-            </button>
-          )
-        })}
+        {tree && (
+          <TreeNode
+            node={tree}
+            depth={1}
+            currentPath={currentPath}
+            onSwitch={(qid) => popToLayer(qid)}
+          />
+        )}
       </nav>
     </aside>
+  )
+}
+
+// 递归渲染树节点：当前 path 上的层高亮，子分支缩进
+function TreeNode({ node, depth, currentPath, onSwitch }) {
+  if (!node) return null
+  const isCurrent = currentPath[currentPath.length - 1] === node.qa_id
+  const onPath = currentPath.includes(node.qa_id)  // 在当前路径上
+  const stemColor = isCurrent ? 'var(--active)' : onPath ? 'var(--rule)' : 'var(--rule-soft)'
+  const hasChildren = node.children && node.children.length > 0
+  return (
+    <div style={styles.treeNode}>
+      <button
+        style={{
+          ...styles.layerBtn,
+          borderLeft: `2px solid ${stemColor}`,
+          background: isCurrent ? 'var(--active-soft)' : 'transparent',
+          opacity: isCurrent ? 1 : 0.72,
+          fontWeight: isCurrent ? 500 : 400,
+        }}
+        onClick={() => onSwitch(node.qa_id)}
+        title={isCurrent ? '当前层' : '点击切换到这层'}
+      >
+        <div style={styles.layerHead}>
+          <span style={styles.depthTag}>L{depth}</span>
+          <span style={styles.q}>{node.question}</span>
+          {node.loading && <span style={styles.loadingDot} />}
+          {hasChildren && <span style={styles.branchMark}>{hasChildren > 1 ? `┬${hasChildren}` : '└'}</span>}
+        </div>
+        {node.layer_summary && (
+          <div style={styles.preview}>{node.layer_summary}</div>
+        )}
+      </button>
+      {/* 子分支：当前路径上的层展开 children，非路径上的层也展开（树导航可见） */}
+      {hasChildren && (
+        <div style={styles.childrenWrap}>
+          {node.children.map((child, i) => (
+            <TreeNode
+              key={child.qa_id || i}
+              node={child}
+              depth={depth + 1}
+              currentPath={currentPath}
+              onSwitch={onSwitch}
+            />
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -119,6 +146,8 @@ const styles = {
   },
   emptyStem: { width: 2, height: 22, borderRadius: 1, background: 'var(--rule)' },
   tree: { display: 'flex', flexDirection: 'column', gap: 1 },
+  treeNode: { position: 'relative' },
+  childrenWrap: { marginLeft: 14, display: 'flex', flexDirection: 'column', gap: 1, marginTop: 1 },
   layerBtn: {
     textAlign: 'left', background: 'transparent', border: 'none', borderLeft: '2px solid transparent',
     borderRadius: '0 var(--r-sm) var(--r-sm) 0', padding: '8px 10px 8px 12px',

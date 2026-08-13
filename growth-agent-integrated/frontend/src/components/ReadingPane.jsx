@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react'
 import * as api from '../api/client'
-import { useStore, updateLayer, clearInflight, getState, setLastViewed, guardAction } from '../store/qaStore'
+import { useStore, updateLayer, clearInflight, getState, setLastViewed, guardAction, goBack, findNode } from '../store/qaStore'
 
 // 阅读主区：当前层的回答正文 + 内联概念 + 层摘要 + 正文选中创建概念
 // 签名元素：层标签左侧的"生长茎"——depth 越深茎越长，跨层连续生长感
@@ -20,13 +20,23 @@ function tierForCount(c) {
 }
 
 export default function ReadingPane() {
-  const stack = useStore((s) => s.stack)
-  const currentIdx = useStore((s) => s.currentIdx)
+  const tree = useStore((s) => s.tree)
+  const currentPath = useStore((s) => s.currentPath)
   const inflight = useStore((s) => s.inflight)
   const activeSid = useStore((s) => s.activeSessionId)
 
-  // 当前层 = currentIdx 指向的层（回上层只移 idx 不删层）
-  const current = currentIdx >= 0 ? stack[currentIdx] : stack[stack.length - 1]
+  // 当前层 = currentPath 末尾节点（树状分支结构）
+  const current = currentPath.length > 0 ? findNode(currentPath[currentPath.length - 1]) : null
+
+  // 键盘翻页:Alt+← 后退(沿 path 向上)
+  useEffect(() => {
+    const onKey = (e) => {
+      if (!e.altKey) return
+      if (e.key === 'ArrowLeft') { e.preventDefault(); goBack() }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   if (!current) {
     return (
@@ -42,11 +52,22 @@ export default function ReadingPane() {
     )
   }
 
-  const depth = (currentIdx >= 0 ? currentIdx : stack.length - 1) + 1
-  return <ReadingLayer layer={current} depth={depth} inflight={inflight} />
+  const depth = currentPath.length
+  const canBack = currentPath.length > 1
+  return (
+    <ReadingLayer
+      layer={current}
+      depth={depth}
+      inflight={inflight}
+      canBack={canBack}
+      canForward={canForward}
+      pageIdx={depth}
+      pageTotal={currentPath.length}
+    />
+  )
 }
 
-function ReadingLayer({ layer, depth, inflight }) {
+function ReadingLayer({ layer, depth, inflight, canBack, canForward, pageIdx, pageTotal }) {
   // 内联概念：把 concepts 按 canonical_name/aliases 在正文里找首次出现位置
   const { segments, unmatched } = useMemo(
     () => buildInlineSegments(layer.answer || '', layer.concepts || []),
@@ -63,6 +84,18 @@ function ReadingLayer({ layer, depth, inflight }) {
           </div>
           <div style={styles.layerMeta}>
             <span style={styles.depthTag}>第 {depth} 层</span>
+            {pageTotal > 1 && (
+              <div style={styles.pager} aria-label="探索历史翻页">
+                <button
+                  style={{ ...styles.pageBtn, ...(!canBack ? styles.pageBtnDisabled : {}) }}
+                  onClick={goBack}
+                  disabled={!canBack}
+                  title={canBack ? '上一层' : '已是最早一层'}
+                  aria-label="上一层"
+                >‹</button>
+                <span style={styles.pageCount}>第 {pageIdx} 层</span>
+              </div>
+            )}
             <h1 style={styles.layerQ}>{layer.question}</h1>
             {layer.loading && <span style={styles.loadingDot} title="生成中" />}
           </div>
@@ -336,6 +369,26 @@ const styles = {
     fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--active)',
     background: 'var(--active-soft)', borderRadius: 'var(--r-sm)', padding: '2px 8px',
     letterSpacing: '0.04em', flexShrink: 0,
+  },
+  // 翻页器:学习手账的"翻页"隐喻——前进/后退切层,中间页码指示进度
+  pager: {
+    display: 'inline-flex', alignItems: 'center', gap: 0, flexShrink: 0,
+    border: '1px solid var(--rule)', borderRadius: 'var(--r-sm)',
+    background: 'var(--paper)', overflow: 'hidden',
+  },
+  pageBtn: {
+    width: 22, height: 22, border: 'none', background: 'transparent',
+    cursor: 'pointer', color: 'var(--active)', fontFamily: 'var(--serif)',
+    fontSize: 16, lineHeight: 1, padding: 0, transition: 'background 0.15s, color 0.15s',
+  },
+  pageBtnDisabled: {
+    color: 'var(--ink-faint)', cursor: 'not-allowed', opacity: 0.5,
+  },
+  pageCount: {
+    fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--ink-soft)',
+    padding: '0 6px', minWidth: 34, textAlign: 'center', letterSpacing: '0.04em',
+    borderLeft: '1px solid var(--rule-soft)', borderRight: '1px solid var(--rule-soft)',
+    lineHeight: '22px',
   },
   layerQ: {
     fontFamily: 'var(--serif)', fontSize: 18, fontWeight: 600, color: 'var(--ink)',
