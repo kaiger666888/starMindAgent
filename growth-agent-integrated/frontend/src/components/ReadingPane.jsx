@@ -1,6 +1,8 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react'
 import * as api from '../api/client'
-import { useStore, updateLayer, clearInflight, getState, setLastViewed, guardAction, goBack, findNode } from '../store/qaStore'
+import { useStore, updateLayer, clearInflight, setLastViewed, guardAction, goBack, findNode } from '../store/qaStore'
+import { renderMarkdown } from './markdownRenderer.jsx'
+import ReaderControls from './ReaderControls'
 
 // 阅读主区：当前层的回答正文 + 内联概念 + 层摘要 + 正文选中创建概念
 // 签名元素：层标签左侧的"生长茎"——depth 越深茎越长，跨层连续生长感
@@ -60,23 +62,23 @@ export default function ReadingPane() {
       depth={depth}
       inflight={inflight}
       canBack={canBack}
-      canForward={canForward}
-      pageIdx={depth}
-      pageTotal={currentPath.length}
     />
   )
 }
 
-function ReadingLayer({ layer, depth, inflight, canBack, canForward, pageIdx, pageTotal }) {
-  // 内联概念：把 concepts 按 canonical_name/aliases 在正文里找首次出现位置
-  const { segments, unmatched } = useMemo(
-    () => buildInlineSegments(layer.answer || '', layer.concepts || []),
-    [layer.answer, layer.concepts]
+function ReadingLayer({ layer, depth, inflight, canBack }) {
+  // concepts 用于:正文 markdown 渲染时做内联概念切分(可下钻) + unmatched 提示
+  const concepts = layer.concepts || []
+  // buildInlineSegments 只为拿 unmatched(渲染逻辑独立,匹配规则与渲染器一致)
+  const { unmatched } = useMemo(
+    () => buildInlineSegments(layer.answer || '', concepts),
+    [layer.answer, concepts]
   )
 
   return (
     <div style={styles.wrap}>
       <div style={styles.scrollWrap}>
+        <ReaderControls />
         {/* 层标签 + 生长茎(签名元素) */}
         <header style={styles.layerHeader}>
           <div style={styles.stem} aria-hidden="true">
@@ -84,16 +86,14 @@ function ReadingLayer({ layer, depth, inflight, canBack, canForward, pageIdx, pa
           </div>
           <div style={styles.layerMeta}>
             <span style={styles.depthTag}>第 {depth} 层</span>
-            {pageTotal > 1 && (
+            {canBack && (
               <div style={styles.pager} aria-label="探索历史翻页">
                 <button
-                  style={{ ...styles.pageBtn, ...(!canBack ? styles.pageBtnDisabled : {}) }}
+                  style={styles.pageBtn}
                   onClick={goBack}
-                  disabled={!canBack}
-                  title={canBack ? '上一层' : '已是最早一层'}
+                  title="上一层"
                   aria-label="上一层"
                 >‹</button>
-                <span style={styles.pageCount}>第 {pageIdx} 层</span>
               </div>
             )}
             <h1 style={styles.layerQ}>{layer.question}</h1>
@@ -101,10 +101,10 @@ function ReadingLayer({ layer, depth, inflight, canBack, canForward, pageIdx, pa
           </div>
         </header>
 
-        {/* 回答正文 + 内联概念 —— 衬线正文,书本感 */}
+        {/* 回答正文 + 内联概念 —— markdown 渲染,衬线书本感 */}
         <article style={styles.answer}>
           {layer.answer ? (
-            <InlineAnswer segments={segments} layer={layer} inflight={inflight} />
+            <InlineAnswer answer={layer.answer} concepts={concepts} layer={layer} inflight={inflight} />
           ) : (
             <div style={styles.generating}>
               {layer.loading ? '正在落笔…' : '（空回答）'}
@@ -139,17 +139,21 @@ function ReadingLayer({ layer, depth, inflight, canBack, canForward, pageIdx, pa
   )
 }
 
-// —— 内联回答：把正文按概念位置切分，概念位置渲染为可点击的内联 chip ——
-function InlineAnswer({ segments, layer, inflight }) {
+// —— 内联回答:markdown 渲染正文,概念位置渲染为可点击的内联 chip ——
+function InlineAnswer({ answer, concepts, layer, inflight }) {
   const [selection, setSelection] = useState(null)
   const articleRef = useRef(null)
+
+  // 概念渲染回调:markdown 渲染器在概念位置调它,返回内联 ConceptInline
+  const renderConcept = (concept) => (
+    <ConceptInline concept={concept} inflight={inflight} layer={layer} inline />
+  )
 
   function handleMouseUp() {
     const sel = window.getSelection()
     if (!sel || sel.isCollapsed) { setSelection(null); return }
     const text = sel.toString().trim()
     if (text.length < 2 || text.length > 20) { setSelection(null); return }
-    // 获取选中位置
     const range = sel.getRangeAt(0)
     const rect = range.getBoundingClientRect()
     const articleRect = articleRef.current?.getBoundingClientRect()
@@ -164,24 +168,20 @@ function InlineAnswer({ segments, layer, inflight }) {
   async function onCreateAndDrill(text) {
     if (!guardAction(null)) return
     setLastViewed(layer.qa_id, null)
-    // 1. 调 correct API add 把选中词标为概念（新建本地概念）
     const localId = `local_${Date.now()}`
     try {
       await api.correctAnnotation(layer.qa_id, null, 'add')
     } catch (e) { /* 后端 add 需 concept_id,这里用本地 */ }
-    // 2. 直接以下钻方式开新层（用选中词作 question）
     const child = await api.drillDown(layer.qa_id, localId, text)
-    // 本地 pushLayer
     const { pushLayer } = await import('../store/qaStore')
     pushLayer({
       qa_id: child.qa_id, question: child.question || text, answer: '',
       status: 'generating', concepts: [], layer_summary: '', loading: true,
     })
     api.incrementExplore(localId)
-    // 订阅 SSE
     api.subscribeStream(child.qa_id, {
       answer_delta: (ev) => {
-        const cur = getState().stack.find((l) => l.qa_id === child.qa_id)
+        const cur = findNode(child.qa_id)
         updateLayer(child.qa_id, { answer: (cur?.answer || '') + ev.text })
       },
       status: (ev) => updateLayer(child.qa_id, { status: ev.status }),
@@ -196,13 +196,7 @@ function InlineAnswer({ segments, layer, inflight }) {
 
   return (
     <div ref={articleRef} style={styles.articleInner} onMouseUp={handleMouseUp}>
-      {segments.map((seg, i) => (
-        seg.type === 'text' ? (
-          <React.Fragment key={i}>{seg.text}</React.Fragment>
-        ) : (
-          <ConceptInline key={i} concept={seg.concept} inflight={inflight} layer={layer} inline />
-        )
-      ))}
+      {renderMarkdown(answer, concepts, renderConcept)}
       {selection && (
         <div style={{ ...styles.popover, left: selection.x, top: selection.y }}>
           <button style={styles.popoverBtn} onClick={() => onCreateAndDrill(selection.text)}>
@@ -233,7 +227,7 @@ function ConceptInline({ concept, inflight, layer, inline }) {
     api.incrementExplore(concept.concept_id)
     api.subscribeStream(child.qa_id, {
       answer_delta: (ev) => {
-        const cur = getState().stack.find((l) => l.qa_id === child.qa_id)
+        const cur = findNode(child.qa_id)
         updateLayer(child.qa_id, { answer: (cur?.answer || '') + ev.text })
       },
       status: (ev) => updateLayer(child.qa_id, { status: ev.status }),
@@ -343,9 +337,9 @@ function buildInlineSegments(answer, concepts) {
 }
 
 const styles = {
-  wrap: { flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, background: 'var(--paper)' },
+  wrap: { flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, background: 'var(--paper)', overflow: 'auto' },
   // 阅读区:max-width 680(中文长行 40-55 字舒适),上下加大呼吸
-  scrollWrap: { maxWidth: 680, margin: '0 auto', padding: '32px 36px 56px', width: '100%' },
+  scrollWrap: { maxWidth: 680, margin: '0 auto', padding: '32px 36px 56px', width: '100%', minHeight: '100%', position: 'relative' },
   // 空态:加一根短茎暗示"等一个问题落下"
   empty: { flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: 48, background: 'var(--paper)', gap: 14 },
   emptyStem: { width: 3, height: 28, borderRadius: 2, background: 'var(--rule)', marginBottom: 4 },
@@ -381,15 +375,6 @@ const styles = {
     cursor: 'pointer', color: 'var(--active)', fontFamily: 'var(--serif)',
     fontSize: 16, lineHeight: 1, padding: 0, transition: 'background 0.15s, color 0.15s',
   },
-  pageBtnDisabled: {
-    color: 'var(--ink-faint)', cursor: 'not-allowed', opacity: 0.5,
-  },
-  pageCount: {
-    fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--ink-soft)',
-    padding: '0 6px', minWidth: 34, textAlign: 'center', letterSpacing: '0.04em',
-    borderLeft: '1px solid var(--rule-soft)', borderRight: '1px solid var(--rule-soft)',
-    lineHeight: '22px',
-  },
   layerQ: {
     fontFamily: 'var(--serif)', fontSize: 18, fontWeight: 600, color: 'var(--ink)',
     lineHeight: 1.4, flex: 1, margin: 0, letterSpacing: '0.005em',
@@ -404,7 +389,7 @@ const styles = {
     fontFamily: 'var(--serif)', letterSpacing: 'var(--tracking-body)',
     textRendering: 'optimizeLegibility', WebkitFontSmoothing: 'antialiased',
   },
-  articleInner: { whiteSpace: 'pre-wrap', position: 'relative', wordBreak: 'break-word' },
+  articleInner: { position: 'relative', wordBreak: 'break-word' },
   generating: { color: 'var(--ink-soft)', fontStyle: 'italic', fontFamily: 'var(--serif)', fontSize: 'var(--fs-body)' },
   inline: {
     fontWeight: 500, position: 'relative',

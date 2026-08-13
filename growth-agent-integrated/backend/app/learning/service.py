@@ -84,8 +84,8 @@ async def import_markdown(user_id: str, title: str, content: str) -> dict:
 
     log.info("imported material=%s qa=%s title=%s size=%d", material_id, qa_id, title, len(content))
 
-    # 抽取概念（异步，不阻塞导入返回）
-    concepts = await _extract_concepts_from_material(qa_id, material_id, content_plain)
+    # 抽取概念（传原始 content 含 md 标题，降级用标题抽取）
+    concepts = await _extract_concepts_from_material(qa_id, material_id, session_id, content)
 
     return {
         "material_id": material_id, "qa_id": qa_id,
@@ -94,10 +94,11 @@ async def import_markdown(user_id: str, title: str, content: str) -> dict:
     }
 
 
-async def _extract_concepts_from_material(qa_id: str, material_id: str, text: str) -> list[dict]:
+async def _extract_concepts_from_material(qa_id: str, material_id: str, session_id: str, md_content: str) -> list[dict]:
     """用 LLM 从材料全文抽取概念，归一化，关联到 L0 QAStep。"""
-    if not text.strip():
+    if not md_content.strip():
         return []
+    text = md_content  # 兼容内部用 text 变量名
     from app.inference.backend import default_backend
     backend = default_backend()
     if not hasattr(backend, "complete_text"):
@@ -108,42 +109,102 @@ async def _extract_concepts_from_material(qa_id: str, material_id: str, text: st
         "name 用概念规范名(2-6字)，aliases 含中英文/缩写别名。只输出 JSON。"
     )
     user = f"学习材料标题/摘要：\n{text[:2000]}"
-    try:
-        import json as _json, re as _re
-        raw = await backend.complete_text(system, user, timeout=30.0)
-        cleaned = _re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=_re.IGNORECASE)
-        cleaned = _re.sub(r"\s*```\s*$", "", cleaned).strip()
-        m = _re.search(r"\[[\s\S]*\]", cleaned)
-        if not m:
-            return []
-        items = _json.loads(m.group(0))
-    except Exception as e:
-        log.warning("material concept extract failed: %s", e)
+    import json as _json, re as _re
+    items = None
+    # LLM 抽取（带重试）
+    for attempt in range(2):
+        try:
+            raw = await backend.complete_text(system, user, timeout=30.0)
+            cleaned = _re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=_re.IGNORECASE)
+            cleaned = _re.sub(r"\s*```\s*$", "", cleaned).strip()
+            m = _re.search(r"\[[\s\S]*\]", cleaned)
+            if m:
+                items = _json.loads(m.group(0))
+                break
+        except Exception as e:
+            log.warning("material concept extract attempt %d failed: %s", attempt + 1, e)
+            if attempt == 0:
+                import asyncio
+                await asyncio.sleep(2)  # 429 退避
+
+    # LLM 失败时本地规则降级抽取（基于标题 + 高频词）
+    if not items:
+        log.info("LLM concept extract failed, fallback to local rule-based")
+        items = _local_extract_concepts(text)
+        # content_plain 已去 md 标题标记，降级在纯文本上跑可能抽不到标题
+        # 用原始 content（含 md 标记）再跑一次
+        if not items and text:
+            # content_plain 短文本降级：取 2-6 字高频中文词（阈值2次）
+            import re as _re2
+            word_freq = {}
+            for m in _re2.finditer(r"[\u4e00-\u9fa5]{2,6}", text):
+                w = m.group()
+                word_freq[w] = word_freq.get(w, 0) + 1
+            for w, freq in sorted(word_freq.items(), key=lambda x: -x[1])[:8]:
+                if freq >= 2 and 2 <= len(w) <= 8:
+                    items.append({"name": w, "aliases": [], "confidence": min(0.9, 0.5 + freq * 0.1)})
+
+    log.warning("material extract: items=%d, first=%s", len(items), items[0] if items else None)
+
+    if not items:
         return []
 
     # 归一化（复用 concept normalizer）
     from app.concept.normalization import normalizer
+    from app.schemas import ConceptItem
     from app.models.tables import QASession
     concepts_out = []
     async with session_scope() as s:
-        # L0 QAStep 没 session_id，归一化用 material_id 临时作 session
-        # 实际上归一化只查全局 concept_node，不依赖 session
         for item in items:
             if not item.get("name"):
                 continue
             try:
-                resolved = await normalizer.normalize(item, qa_id, material_id)
+                # normalize 期望 ConceptItem 对象（有 .name 属性），不是 dict
+                ci = ConceptItem(name=item["name"], aliases=item.get("aliases", []),
+                                 confidence=float(item.get("confidence", 0.7)))
+                resolved = await normalizer.normalize(ci, qa_id, session_id)
                 concepts_out.append(resolved)
             except Exception as e:
                 log.warning("normalize %s failed: %s", item.get("name"), e)
-        # 把 concept_ids 存进 L0 QAStep.extracted_concept_ids
         cids = [c["concept_id"] for c in concepts_out if c.get("concept_id")]
         if cids:
-            await s.execute(text(
-                "UPDATE qa_step SET extracted_concept_ids = :ids::jsonb "
-                "WHERE qa_id = CAST(:id AS uuid)"
-            ).bindparams(ids=_json.dumps(cids), id=qa_id))
+            from sqlalchemy import text as sql_text
+            ids_json = _json.dumps(cids)
+            await s.execute(sql_text(
+                "UPDATE qa_step SET extracted_concept_ids = CAST(:ids AS jsonb) "
+                "WHERE qa_id = CAST(:qid AS uuid)"
+            ), {"ids": ids_json, "qid": qa_id})
     return concepts_out
+
+
+def _local_extract_concepts(text: str) -> list[dict]:
+    """LLM 不可用时本地规则抽取：取 markdown 标题词 + 高频名词短语。
+
+    简单但有效：md 的 ## 标题通常是核心概念。
+    """
+    import re
+    items = []
+    seen = set()
+    # 1. md 标题作概念（最可靠）
+    for m in re.finditer(r"^#{1,3}\s+(.+)$", text, re.MULTILINE):
+        title = m.group(1).strip()
+        # 去标题里的标点/连词
+        for part in re.split(r"[·、，,/（）()【】\[\]：:]", title):
+            part = part.strip()
+            if 2 <= len(part) <= 12 and part not in seen:
+                seen.add(part)
+                items.append({"name": part, "aliases": [], "confidence": 0.8})
+    # 2. 高频中文词（2-4字，出现≥3次）
+    word_freq = {}
+    for m in re.finditer(r"[\u4e00-\u9fa5]{2,4}", text):
+        w = m.group()
+        if len(w) >= 2:
+            word_freq[w] = word_freq.get(w, 0) + 1
+    for w, freq in sorted(word_freq.items(), key=lambda x: -x[1])[:10]:
+        if freq >= 3 and w not in seen and 2 <= len(w) <= 8:
+            seen.add(w)
+            items.append({"name": w, "aliases": [], "confidence": min(0.9, 0.5 + freq * 0.05)})
+    return items[:12]
 
 
 async def get_material_context(material_id: str, query: str, max_chars: int = 2000) -> str:
