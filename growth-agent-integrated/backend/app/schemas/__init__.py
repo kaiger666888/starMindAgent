@@ -33,6 +33,7 @@ class QAStartRequest(BaseModel):
     domain_tag: Optional[str] = None
     parent_qa_id: Optional[str] = None  # 下钻时挂父 QAStep
     user_id: Optional[str] = None  # 学习记忆：绑定会话归属用户（缺省用 "default"）
+    material_id: Optional[str] = None  # 学习材料：注入文件上下文到 prompt
 
 
 class QAStepOut(BaseModel):

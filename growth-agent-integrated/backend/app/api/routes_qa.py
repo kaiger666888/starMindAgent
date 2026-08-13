@@ -35,15 +35,24 @@ def _pipeline_for(qa_id: str, session_id: str, question: str) -> QAStepPipeline:
 
 @router.post("/start", response_model=QAStepOut)
 async def start(req: QAStartRequest):
-    """出口3：新问题 → 开新探索树（parent_qa_id=None）。"""
+    """出口3：新问题 → 开新探索树（parent_qa_id=None）。
+
+    学习材料：若 material_id 给定，从文件检索与 question 相关段落注入 prompt。
+    """
     from app.db import session_scope
     from sqlalchemy.dialects.postgresql import insert as pg_insert
     from sqlalchemy import update
     from app.models.tables import QASession, AppUser
     from datetime import datetime, timezone
     user_id = req.user_id or "default"
+    # 学习材料上下文注入
+    question = req.question
+    if req.material_id:
+        from app.learning import service as learning_service
+        ctx = await learning_service.get_material_context(req.material_id, req.question)
+        if ctx:
+            question = f"【参考学习材料相关段落】\n{ctx}\n\n【用户问题】\n{req.question}"
     async with session_scope() as s:
-        # upsert app_user：首次见到该 user_id 即建行，后续刷新 last_active_at
         stmt = pg_insert(AppUser).values(
             user_id=user_id, last_active_at=datetime.now(timezone.utc)
         )
@@ -57,8 +66,15 @@ async def start(req: QAStartRequest):
         await s.flush()
         session_id = sess.session_id
     created = await repo.create(
-        session_id=session_id, question=req.question, depth=1
+        session_id=session_id, question=question, depth=1
     )
+    # 挂 material_id（子层继承根层 material_id 用于上下文注入）
+    if req.material_id:
+        from sqlalchemy import text
+        async with session_scope() as s:
+            await s.execute(text(
+                "UPDATE qa_step SET material_id = CAST(:mid AS uuid) WHERE qa_id = CAST(:id AS uuid)"
+            ).bindparams(mid=req.material_id, id=created.qa_id))
     return QAStepOut(
         qa_id=created.qa_id, session_id=session_id,
         parent_qa_id=None, question=created.question, answer=None,
@@ -105,6 +121,17 @@ async def drilldown(qa_id: str, req: DriftDownRequest):
                 f"这里请补充它在当前语境下的不同侧面，避免与前述内容重复。）"
             )
             question = f"{hint} {question}"
+    # 学习材料上下文注入：查 parent QAStep 的 material_id
+    from app.db import session_scope
+    from sqlalchemy import select, text as sql_text
+    from app.models.tables import QAStep as _QS
+    async with session_scope() as s:
+        mid = (await s.execute(select(_QS.material_id).where(_QS.qa_id == qa_id))).scalar_one_or_none()
+    if mid:
+        from app.learning import service as learning_service
+        ctx = await learning_service.get_material_context(str(mid), question)
+        if ctx:
+            question = f"【参考学习材料相关段落】\n{ctx}\n\n【用户问题】\n{question}"
     pipe = _pipeline_for(qa_id, parent["session_id"], parent["question"])
     try:
         new_pipe = await pipe.drill_down(

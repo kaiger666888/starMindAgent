@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.api import qa_router, concept_router, harness_router, memory_router
+from app.api import qa_router, concept_router, harness_router, memory_router, learning_router
 from app.inference import backfill_queue, backfill_processor
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -57,6 +57,7 @@ app.include_router(qa_router)
 app.include_router(concept_router)
 app.include_router(harness_router)
 app.include_router(memory_router)
+app.include_router(learning_router)
 
 
 @app.get("/health")

@@ -156,3 +156,36 @@ export async function refreshProfile(userId, force = false) {
   if (!res.ok) throw new Error(`refresh profile failed: ${res.status}`)
   return res.json()
 }
+
+// —— 学习材料导入 ——
+export async function importMarkdown(userId, title, content) {
+  const res = await fetch(`${BASE}/learning/import`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_id: userId, title, content }),
+  })
+  if (!res.ok) throw new Error(`import failed: ${res.status}`)
+  return res.json()
+}
+
+export async function uploadMarkdown(userId, file) {
+  const fd = new FormData()
+  fd.append('file', file)
+  const res = await fetch(`${BASE}/learning/upload?user_id=${encodeURIComponent(userId)}`, {
+    method: 'POST', body: fd,
+  })
+  if (!res.ok) throw new Error(`upload failed: ${res.status}`)
+  return res.json()
+}
+
+export async function listMaterials(userId) {
+  const res = await fetch(`${BASE}/learning/materials?user_id=${encodeURIComponent(userId)}`)
+  if (!res.ok) throw new Error(`list materials failed: ${res.status}`)
+  return res.json()
+}
+
+export async function getMaterial(materialId) {
+  const res = await fetch(`${BASE}/learning/materials/${materialId}`)
+  if (!res.ok) throw new Error(`get material failed: ${res.status}`)
+  return res.json()
+}

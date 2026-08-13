@@ -98,6 +98,10 @@ class QAStep(Base):
     last_viewed_concept_id: Mapped[str | None] = mapped_column(
         ForeignKey("concept_node.concept_id", ondelete="SET NULL")
     )
+    # 006: 关联学习材料（根层=导入的 md，子层继承用于上下文注入）
+    material_id: Mapped[str | None] = mapped_column(
+        ForeignKey("learning_material.material_id", ondelete="SET NULL")
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -182,3 +186,17 @@ class UserProfile(Base):
     last_summary_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     summary_model: Mapped[str | None] = mapped_column(Text)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+
+# ---------------------------------------------------------------------------
+# 学习材料导入（006 迁移）：导入 markdown 作探索根 + 上下文注入
+# ---------------------------------------------------------------------------
+class LearningMaterial(Base):
+    __tablename__ = "learning_material"
+    material_id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(Text, ForeignKey("app_user.user_id", ondelete="CASCADE"), nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    content_plain: Mapped[str] = mapped_column(Text, nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

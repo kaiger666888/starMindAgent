@@ -1,8 +1,8 @@
-import React, { useState } from 'react'
+import React, { useState, useRef } from 'react'
 import * as api from '../api/client'
 import {
   useStore, pushLayer, updateLayer, popToLayer, setLastViewed,
-  clearInflight, guardAction, getState, setActiveSession, resetStack,
+  clearInflight, guardAction, setActiveSession, resetStack, findNode, setRoot,
 } from '../store/qaStore'
 
 const MAX_DEPTH = 6
@@ -12,6 +12,8 @@ export default function TreeView() {
   const currentPath = useStore((s) => s.currentPath)
   const inflight = useStore((s) => s.inflight)
   const [question, setQuestion] = useState('')
+  const [importing, setImporting] = useState(false)
+  const fileInputRef = useRef(null)
 
   React.useEffect(() => {
     const handler = (e) => setQuestion(e.detail)
@@ -33,7 +35,7 @@ export default function TreeView() {
   function subscribe(qaId) {
     api.subscribeStream(qaId, {
       answer_delta: (ev) => {
-        const cur = getState().stack.find((l) => l.qa_id === qaId)
+        const cur = findNode(qaId)
         updateLayer(qaId, { answer: (cur?.answer || '') + ev.text })
       },
       status: (ev) => updateLayer(qaId, { status: ev.status }),
@@ -42,6 +44,35 @@ export default function TreeView() {
       done: () => { updateLayer(qaId, { loading: false }); clearInflight() },
       error: () => { updateLayer(qaId, { loading: false }); clearInflight() },
     })
+  }
+
+  // 导入 markdown：上传文件，建 L0 根层显示文件内容
+  async function onImportFile(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setImporting(true)
+    try {
+      const uid = localStorage.getItem('starMindAgent.uid') || 'default'
+      const result = await api.uploadMarkdown(uid, file)
+      setActiveSession(result.qa_id)  // 用 L0 qa_id 作 active session
+      resetStack()
+      // 建 L0 根层：question=文件名，answer=文件全文，concepts=抽取的
+      setRoot({
+        qa_id: result.qa_id,
+        question: result.title,
+        answer: result.content_plain,
+        status: 'waiting',
+        concepts: result.concepts || [],
+        layer_summary: '',
+        loading: false,
+      })
+      // 如果后端已抽取概念，updateLayer 已含；否则本地补抽（省略，L0 显示全文即可）
+    } catch (err) {
+      alert(`导入失败: ${err.message}`)
+    } finally {
+      setImporting(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
   }
 
   return (
@@ -55,6 +86,22 @@ export default function TreeView() {
           onKeyDown={(e) => e.key === 'Enter' && startNewTree()}
         />
         <button style={styles.btn} onClick={startNewTree} disabled={!!inflight}>开新树</button>
+      </div>
+      <div style={styles.importRow}>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".md,.markdown,.txt"
+          style={{ display: 'none' }}
+          onChange={onImportFile}
+        />
+        <button
+          style={styles.importBtn}
+          onClick={() => fileInputRef.current?.click()}
+          disabled={!!inflight || importing}
+        >
+          {importing ? '导入中…' : '导入学习文件'}
+        </button>
       </div>
 
       {!tree && (
@@ -128,7 +175,14 @@ function TreeNode({ node, depth, currentPath, onSwitch }) {
 
 const styles = {
   wrap: { width: 280, borderRight: '1px solid var(--rule)', padding: '14px 12px', overflowY: 'auto', background: 'var(--paper-soft)', flexShrink: 0 },
-  inputRow: { display: 'flex', gap: 6, marginBottom: 18 },
+  inputRow: { display: 'flex', gap: 6, marginBottom: 10 },
+  importRow: { marginBottom: 18 },
+  importBtn: {
+    width: '100%', padding: '7px 12px', background: 'var(--paper)',
+    color: 'var(--settled)', border: '1px dashed var(--settled)',
+    borderRadius: 'var(--r-sm)', cursor: 'pointer', fontFamily: 'var(--sans)',
+    fontSize: 12, transition: 'all 0.15s',
+  },
   input: {
     flex: 1, padding: '8px 10px', border: '1px solid var(--rule)', borderRadius: 'var(--r-sm)',
     background: 'var(--paper)', fontFamily: 'var(--serif)', fontSize: 13, color: 'var(--ink)',
