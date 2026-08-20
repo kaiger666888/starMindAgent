@@ -20,6 +20,13 @@ export default function App() {
     return () => window.removeEventListener('starmind:startFromConcept', handler)
   }, [])
 
+  // 从档案「继续探索」恢复会话:store 已重建树,这里只负责切到探索视图
+  useEffect(() => {
+    const handler = () => setView('explore')
+    window.addEventListener('starmind:resumeSession', handler)
+    return () => window.removeEventListener('starmind:resumeSession', handler)
+  }, [])
+
   return (
     <div style={styles.app}>
       <header style={styles.header}>

@@ -128,6 +128,86 @@ export function addChildLayer(parentQaId, layer) {
 
 export function setActiveSession(sid) { set({ activeSessionId: sid }) }
 
+// 恢复历史会话:用后端 steps(含 parent_qa_id)重建整棵探索树,
+// 概念从 conceptsById 按 extracted_concept_ids 映射补全。
+// currentPath 落到最深的叶子层,让用户从上次探索的最深处继续。
+// 浏览历史重置为根→…→当前层的路径(丢弃旧的浏览历史)。
+export function restoreSession(sessionId, steps, conceptsById) {
+  if (!steps || steps.length === 0) return false
+
+  // 按 parent_qa_id 建索引:parent_qa_id(null 当根) -> [step, ...]
+  const byParent = new Map()
+  const nullKey = '__root__'
+  for (const st of steps) {
+    const key = st.parent_qa_id || nullKey
+    if (!byParent.has(key)) byParent.set(key, [])
+    byParent.get(key).push(st)
+  }
+
+  // 把单个 step 转成 store 节点(概念按 id 映射,保留本层标识顺序)
+  const toNode = (st) => {
+    const conceptIds = st.extracted_concept_ids || []
+    const concepts = conceptIds
+      .map((id) => conceptsById[id])
+      .filter(Boolean)
+    // 去重(后端可能同 id 重复标识)
+    const seen = new Set()
+    const uniq = concepts.filter((c) => {
+      if (seen.has(c.concept_id)) return false
+      seen.add(c.concept_id)
+      return true
+    })
+    return {
+      qa_id: st.qa_id,
+      question: st.question,
+      answer: st.answer || '',
+      status: st.status || 'waiting',
+      depth: st.depth || 1,
+      concepts: uniq,
+      layer_summary: st.layer_summary || '',
+      loading: false,
+      children: [],
+    }
+  }
+
+  // 递归建树:从 parent 的 children 列表构建子树
+  const buildSubtree = (node) => {
+    const kids = byParent.get(node.qa_id) || []
+    for (const k of kids) {
+      const child = toNode(k)
+      node.children.push(child)
+      buildSubtree(child)
+    }
+    return node
+  }
+
+  const roots = byParent.get(nullKey) || []
+  if (roots.length === 0) return false
+  const rootNode = buildSubtree(toNode(roots[0]))
+
+  // 找最深叶子作为 currentPath 末端(从根 DFS 取最深路径)
+  let deepest = { path: [rootNode.qa_id], node: rootNode }
+  const dfs = (node, path) => {
+    if (path.length > deepest.path.length) deepest = { path: [...path], node }
+    for (const c of (node.children || [])) {
+      dfs(c, [...path, c.qa_id])
+    }
+  }
+  dfs(rootNode, [rootNode.qa_id])
+
+  set({
+    sessionId,
+    activeSessionId: sessionId,
+    tree: rootNode,
+    currentPath: deepest.path,
+    inflight: null,
+    // 浏览历史重置为这条根→当前层的路径,指针指末端
+    history: [...deepest.path],
+    historyIdx: deepest.path.length - 1,
+  })
+  return true
+}
+
 // 更新某层（按 qa_id 遍历树找节点并 patch）
 export function updateLayer(qaId, patch) {
   const node = findNode(qaId)

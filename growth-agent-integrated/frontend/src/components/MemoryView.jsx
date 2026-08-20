@@ -7,12 +7,13 @@ import * as api from '../api/client'
 
 const UID_KEY = 'starMindAgent.uid'
 
+// uid 读取:与 TreeView 一致——未存则用 'default' (而非随机串),
+// 保证提问落库的 user_id 与档案查询的 user_id 一致,否则学习足迹查不到。
 function loadUid() {
   const u = localStorage.getItem(UID_KEY)
   if (u) return u
-  const next = `u_${Math.random().toString(36).slice(2, 8)}`
-  localStorage.setItem(UID_KEY, next)
-  return next
+  localStorage.setItem(UID_KEY, 'default')
+  return 'default'
 }
 
 export default function MemoryView() {
@@ -30,10 +31,21 @@ export default function MemoryView() {
     setError(null)
     setLoadingSessions(true)
     try {
-      const [p, s] = await Promise.all([
+      let [p, s] = await Promise.all([
         api.getProfile(id).catch(() => null),
         api.listSessions(id).catch(() => []),
       ])
+      // 智能回退:若查不到足迹且 uid 非 default,可能是旧的随机 u_xxx uid
+      // 尝试用 default 重查一次(default 是 TreeView 未存 uid 时的默认落库值)
+      if ((!s || s.length === 0) && id !== 'default') {
+        const s2 = await api.listSessions('default').catch(() => [])
+        if (s2 && s2.length > 0) {
+          localStorage.setItem(UID_KEY, 'default')
+          setUid('default')
+          p = await api.getProfile('default').catch(() => null)
+          s = s2
+        }
+      }
       setProfile(p)
       setSessions(s)
     } catch (e) {
@@ -205,6 +217,8 @@ function ConceptCol({ title, items, tone }) {
 function SessionItem({ sess, idx, expanded, onToggle }) {
   const [detail, setDetail] = useState(null)
   const [loadingD, setLoadingD] = useState(false)
+  const [resuming, setResuming] = useState(false)
+  const [resumeErr, setResumeErr] = useState(null)
   async function loadDetail() {
     if (detail) return
     setLoadingD(true)
@@ -215,6 +229,24 @@ function SessionItem({ sess, idx, expanded, onToggle }) {
     }
   }
   useEffect(() => { if (expanded) loadDetail() }, [expanded])
+
+  // 继续探索:把历史会话恢复成探索树,切到探索视图
+  async function onResume() {
+    setResuming(true)
+    setResumeErr(null)
+    try {
+      const { restoreSession } = await import('../store/qaStore')
+      const { session_id, steps, conceptsById } = await api.resumeSession(sess.session_id)
+      const ok = restoreSession(session_id, steps, conceptsById)
+      if (!ok) throw new Error('该会话无可恢复的步骤')
+      window.dispatchEvent(new CustomEvent('starmind:resumeSession'))
+    } catch (e) {
+      setResumeErr(e.message || '恢复失败')
+    } finally {
+      setResuming(false)
+    }
+  }
+
   return (
     <li style={s.timelineItem}>
       <button style={s.timelineBtn} onClick={onToggle}>
@@ -229,15 +261,24 @@ function SessionItem({ sess, idx, expanded, onToggle }) {
           {loadingD && !detail ? (
             <div style={s.empty}>载入中…</div>
           ) : detail && detail.steps ? (
-            detail.steps.map((step, i) => (
-              <div key={step.qa_id} style={{ ...s.stepRow, marginLeft: (step.depth - 1) * 16 }}>
-                <span style={s.stepDepth}>L{step.depth}</span>
-                <div style={s.stepBody}>
-                  <div style={s.stepQ}>{step.question}</div>
-                  {step.answer && <div style={s.stepA}>{truncate(step.answer, 160)}</div>}
+            <>
+              {detail.steps.map((step, i) => (
+                <div key={step.qa_id} style={{ ...s.stepRow, marginLeft: (step.depth - 1) * 16 }}>
+                  <span style={s.stepDepth}>L{step.depth}</span>
+                  <div style={s.stepBody}>
+                    <div style={s.stepQ}>{step.question}</div>
+                    {step.answer && <div style={s.stepA}>{truncate(step.answer, 160)}</div>}
+                  </div>
                 </div>
+              ))}
+              {/* 继续探索:把该会话恢复成探索树,从最深处继续下钻 */}
+              <div style={s.resumeRow}>
+                <button style={s.resumeBtn} onClick={onResume} disabled={resuming}>
+                  {resuming ? '正在恢复…' : '继续探索 →'}
+                </button>
+                {resumeErr && <span style={s.resumeErr}>{resumeErr}</span>}
               </div>
-            ))
+            </>
           ) : (
             <div style={s.empty}>无步骤数据</div>
           )}
@@ -396,4 +437,13 @@ const s = {
   stepBody: { flex: 1, minWidth: 0 },
   stepQ: { fontSize: 13, color: 'var(--ink-read)', fontWeight: 500, fontFamily: 'var(--serif)' },
   stepA: { fontSize: 12, color: 'var(--ink-soft)', marginTop: 3, lineHeight: 1.55, fontFamily: 'var(--serif)' },
+  // 继续探索按钮:陶土棕描边 + 衬线,融入档案气质
+  resumeRow: { marginTop: 14, display: 'flex', alignItems: 'center', gap: 12 },
+  resumeBtn: {
+    padding: '7px 18px', fontSize: 13, fontFamily: 'var(--serif)', fontWeight: 500,
+    color: 'var(--settled)', background: 'var(--settled-soft)',
+    border: '1px solid var(--settled)', borderRadius: 'var(--r-sm)',
+    cursor: 'pointer', transition: 'opacity 0.15s', letterSpacing: '0.02em',
+  },
+  resumeErr: { fontSize: 11, color: 'var(--danger)', fontFamily: 'var(--mono)' },
 }

@@ -142,6 +142,32 @@ export async function getSessionDetail(sessionId) {
   return res.json()
 }
 
+// 恢复会话:并发取 session 详情(steps) + 概念图(概念详情),
+// 合并成 { session_id, steps, conceptsById } 供 store 重建探索树。
+// steps 只含 extracted_concept_ids,概念名/别名/explore_count 需从 graph 补全。
+export async function resumeSession(sessionId) {
+  const [detail, graph] = await Promise.all([
+    getSessionDetail(sessionId),
+    getGraph(sessionId).catch(() => ({ nodes: [], edges: [] })),
+  ])
+  const conceptsById = {}
+  for (const n of (graph.nodes || [])) {
+    conceptsById[n.concept_id] = {
+      concept_id: n.concept_id,
+      name: n.canonical_name,
+      canonical_name: n.canonical_name,
+      aliases: n.aliases || [],
+      explore_count: n.explore_count || 0,
+      understood: (n.explore_count || 0) >= 2,
+    }
+  }
+  return {
+    session_id: detail.session_id,
+    steps: detail.steps || [],
+    conceptsById,
+  }
+}
+
 export async function getProfile(userId) {
   const res = await fetch(`${BASE}/memory/users/${userId}/profile`)
   if (!res.ok && res.status !== 404) throw new Error(`get profile failed: ${res.status}`)
