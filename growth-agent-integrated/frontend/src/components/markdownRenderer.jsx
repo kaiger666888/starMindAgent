@@ -135,7 +135,7 @@ export function renderMarkdown(answer, concepts = [], renderConcept = () => null
       blocks.push(
         <pre key={key++} style={mdStyles.codeBlock}>
           {lang && <span style={mdStyles.codeLang}>{lang}</span>}
-          <code>{code.join('\n')}</code>
+          <code style={mdStyles.codeText}>{code.join('\n')}</code>
         </pre>
       )
       continue
@@ -163,6 +163,7 @@ export function renderMarkdown(answer, concepts = [], renderConcept = () => null
       }
       blocks.push(
         <blockquote key={key++} style={mdStyles.quote}>
+          <span aria-hidden="true" style={mdStyles.quoteMark}>"</span>
           {parseInline(quote.join('\n'), concepts, renderConcept, `q${key}`)}
         </blockquote>
       )
@@ -179,7 +180,10 @@ export function renderMarkdown(answer, concepts = [], renderConcept = () => null
       blocks.push(
         <ul key={key++} style={mdStyles.ul}>
           {items.map((it, j) => (
-            <li key={j} style={mdStyles.li}>{parseInline(it, concepts, renderConcept, `ul${key}-${j}`)}</li>
+            <li key={j} style={mdStyles.li}>
+              <span aria-hidden="true" style={mdStyles.ulMarker} />
+              {parseInline(it, concepts, renderConcept, `ul${key}-${j}`)}
+            </li>
           ))}
         </ul>
       )
@@ -196,9 +200,41 @@ export function renderMarkdown(answer, concepts = [], renderConcept = () => null
       blocks.push(
         <ol key={key++} style={mdStyles.ol}>
           {items.map((it, j) => (
-            <li key={j} style={mdStyles.li}>{parseInline(it, concepts, renderConcept, `ol${key}-${j}`)}</li>
+            <li key={j} style={mdStyles.li}>
+              <span aria-hidden="true" style={mdStyles.olMarker}>{j + 1}.</span>
+              {parseInline(it, concepts, renderConcept, `ol${key}-${j}`)}
+            </li>
           ))}
         </ol>
+      )
+      continue
+    }
+
+    // 分隔线 --- 或 ***
+    if (/^\s*([-*])\1\1+\s*$/.test(line)) {
+      blocks.push(<hr key={key++} style={mdStyles.hr} />)
+      i++
+      continue
+    }
+
+    // 表格 | a | b |
+    if (/^\s*\|.*\|\s*$/.test(line) && i + 1 < lines.length && /^\s*\|?[-:| ]+\|?\s*$/.test(lines[i + 1])) {
+      const header = splitTableRow(line)
+      i += 2 // 跳过分隔行
+      const rows = []
+      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) {
+        rows.push(splitTableRow(lines[i]))
+        i++
+      }
+      blocks.push(
+        <table key={key++} style={mdStyles.table}>
+          <thead><tr>{header.map((c, j) => <th key={j} style={mdStyles.th}>{parseInline(c, concepts, renderConcept, `th${key}-${j}`)}</th>)}</tr></thead>
+          <tbody>
+            {rows.map((r, ri) => (
+              <tr key={ri}>{r.map((c, ci) => <td key={ci} style={mdStyles.td}>{parseInline(c, concepts, renderConcept, `td${key}-${ri}-${ci}`)}</td>)}</tr>
+            ))}
+          </tbody>
+        </table>
       )
       continue
     }
@@ -213,7 +249,9 @@ export function renderMarkdown(answer, concepts = [], renderConcept = () => null
       !lines[i].trimStart().startsWith('```') &&
       !lines[i].trimStart().startsWith('>') &&
       !/^\s*[-*+]\s+/.test(lines[i]) &&
-      !/^\s*\d+\.\s+/.test(lines[i])) {
+      !/^\s*\d+\.\s+/.test(lines[i]) &&
+      !/^\s*\|.*\|\s*$/.test(lines[i]) &&
+      !/^\s*([-*])\1\1+\s*$/.test(lines[i])) {
       para.push(lines[i]); i++
     }
     blocks.push(
@@ -225,35 +263,106 @@ export function renderMarkdown(answer, concepts = [], renderConcept = () => null
   return blocks
 }
 
+// 表格行切分: | a | b | → ['a', 'b']
+function splitTableRow(line) {
+  return line.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim())
+}
+
 const mdStyles = {
-  h1: { fontFamily: 'var(--serif)', fontSize: 'calc(var(--fs-body) + 5px)', fontWeight: 600, color: 'var(--ink)', margin: '24px 0 12px', lineHeight: 1.4, letterSpacing: '0.01em' },
-  h2: { fontFamily: 'var(--serif)', fontSize: 'calc(var(--fs-body) + 2px)', fontWeight: 600, color: 'var(--ink)', margin: '20px 0 10px', lineHeight: 1.4 },
-  h3: { fontFamily: 'var(--serif)', fontSize: 'var(--fs-body)', fontWeight: 600, color: 'var(--ink)', margin: '16px 0 8px', lineHeight: 1.4 },
-  p: { margin: '0 0 14px', color: 'var(--ink-read)', lineHeight: 'var(--lh-body)', letterSpacing: 'var(--tracking-body)' },
-  ul: { margin: '0 0 14px', paddingLeft: '22px', color: 'var(--ink-read)', lineHeight: 'var(--lh-body)' },
-  ol: { margin: '0 0 14px', paddingLeft: '22px', color: 'var(--ink-read)', lineHeight: 'var(--lh-body)' },
-  li: { margin: '0 0 4px' },
+  // 标题:衬线 + 底部发丝线(结构感),h1 字距加宽
+  h1: {
+    fontFamily: 'var(--serif)', fontSize: 'calc(var(--fs-body) + 6px)', fontWeight: 600,
+    color: 'var(--ink)', margin: '28px 0 14px', lineHeight: 1.35, letterSpacing: '0.02em',
+    paddingBottom: '6px', borderBottom: '1px solid var(--rule-soft)',
+  },
+  h2: {
+    fontFamily: 'var(--serif)', fontSize: 'calc(var(--fs-body) + 3px)', fontWeight: 600,
+    color: 'var(--ink)', margin: '22px 0 10px', lineHeight: 1.35,
+  },
+  h3: {
+    fontFamily: 'var(--serif)', fontSize: 'var(--fs-body)', fontWeight: 600,
+    color: 'var(--ink)', margin: '18px 0 8px', lineHeight: 1.4,
+  },
+  // 段落:舒展间距,衬线正文
+  p: {
+    margin: '0 0 16px', color: 'var(--ink-read)', lineHeight: 'var(--lh-body)',
+    letterSpacing: 'var(--tracking-body)',
+  },
+  // 列表:marker 用墨蓝/陶土棕,li 间距呼吸
+  ul: {
+    margin: '0 0 16px', paddingLeft: '0', listStyle: 'none',
+    color: 'var(--ink-read)', lineHeight: 'var(--lh-body)',
+  },
+  ol: {
+    margin: '0 0 16px', paddingLeft: '0', listStyle: 'none',
+    color: 'var(--ink-read)', lineHeight: 'var(--lh-body)', counterReset: 'md-ol',
+  },
+  li: {
+    margin: '0 0 7px', paddingLeft: '26px', position: 'relative',
+  },
+  // ul marker:墨蓝小圆点
+  ulMarker: {
+    position: 'absolute', left: '8px', top: '0.55em', width: '5px', height: '5px',
+    borderRadius: '50%', background: 'var(--active)', opacity: 0.7,
+  },
+  // ol marker:mono 数字 + 陶土棕
+  olMarker: {
+    position: 'absolute', left: 0, top: 0, fontFamily: 'var(--mono)', fontSize: '0.85em',
+    color: 'var(--settled)', fontWeight: 500, minWidth: '20px',
+  },
   bold: { fontWeight: 600, color: 'var(--ink)' },
   italic: { fontStyle: 'italic' },
+  // inline code:mono + 浅底 + 圆角,不抢正文
   inlineCode: {
-    fontFamily: 'var(--mono)', fontSize: '0.88em', background: 'var(--code-bg)',
-    color: 'var(--code-ink)', padding: '1px 5px', borderRadius: 'var(--r-sm)',
+    fontFamily: 'var(--mono)', fontSize: '0.86em', background: 'var(--code-bg)',
+    color: 'var(--code-ink)', padding: '1.5px 6px', borderRadius: 'var(--r-sm)',
     borderWidth: '1px', borderStyle: 'solid', borderColor: 'var(--rule-soft)',
   },
+  // 代码块:左侧色带 + 右上语言标签胶囊 + mono 正文
   codeBlock: {
-    margin: '0 0 16px', padding: '14px 16px', background: 'var(--code-bg)',
-    borderRadius: 'var(--r-md)', overflowX: 'auto',
-    borderLeft: '3px solid var(--quote-border)', position: 'relative',
+    margin: '0 0 18px', padding: '14px 16px 14px 18px', background: 'var(--code-bg)',
+    borderRadius: 'var(--r-md)', overflowX: 'auto', position: 'relative',
+    borderLeft: '3px solid var(--settled)',
   },
   codeLang: {
-    position: 'absolute', top: 6, right: 10, fontFamily: 'var(--mono)',
-    fontSize: 10, color: 'var(--ink-faint)', letterSpacing: '0.06em',
+    position: 'absolute', top: 8, right: 10, fontFamily: 'var(--mono)', fontSize: 9.5,
+    color: 'var(--ink-faint)', letterSpacing: '0.08em', textTransform: 'uppercase',
+    background: 'var(--paper)', padding: '1px 6px', borderRadius: 'var(--r-sm)',
+    border: '1px solid var(--rule-soft)',
   },
+  codeText: {
+    fontFamily: 'var(--mono)', fontSize: '0.88em', lineHeight: 1.65,
+    color: 'var(--code-ink)', whiteSpace: 'pre',
+  },
+  // 引用:前引号 + 陶土棕色调,衬线斜体
   quote: {
-    margin: '0 0 16px', padding: '10px 16px', background: 'var(--quote-bg)',
-    borderLeft: '3px solid var(--quote-border)', borderRadius: 'var(--r-sm)',
+    margin: '0 0 18px', padding: '8px 18px 8px 20px', background: 'var(--quote-bg)',
+    borderLeft: '3px solid var(--settled)', borderRadius: 'var(--r-sm)',
     color: 'var(--ink-soft)', fontStyle: 'italic', fontFamily: 'var(--serif)',
-    lineHeight: 'var(--lh-body)',
+    lineHeight: 'var(--lh-body)', position: 'relative',
   },
-  link: { color: 'var(--active)', textDecoration: 'underline', textDecorationStyle: 'dotted', textUnderlineOffset: '3px' },
+  quoteMark: {
+    position: 'absolute', left: '6px', top: '-2px', fontFamily: 'var(--serif)',
+    fontSize: '28px', color: 'var(--settled)', opacity: 0.35, lineHeight: 1,
+  },
+  link: {
+    color: 'var(--active)', textDecoration: 'underline', textDecorationStyle: 'dotted',
+    textUnderlineOffset: '3px',
+  },
+  // 表格:发丝线分隔,表头加底
+  table: {
+    margin: '0 0 18px', borderCollapse: 'collapse', width: '100%',
+    fontSize: '0.95em', fontFamily: 'var(--serif)',
+  },
+  th: {
+    padding: '8px 12px', borderBottom: '2px solid var(--rule)', color: 'var(--ink)',
+    fontWeight: 600, textAlign: 'left', background: 'var(--paper-soft)',
+  },
+  td: {
+    padding: '7px 12px', borderBottom: '1px solid var(--rule-soft)', color: 'var(--ink-read)',
+  },
+  // 分隔线 ---
+  hr: {
+    border: 'none', borderTop: '1px solid var(--rule)', margin: '20px 0',
+  },
 }

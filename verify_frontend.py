@@ -11,7 +11,7 @@ async def main():
         page.on('console', lambda msg: errors.append(f"{msg.type}: {msg.text}") if msg.type in ('error', 'warning') else None)
         page.on('pageerror', lambda e: errors.append(f"pageerror: {e}"))
 
-        await page.goto('http://localhost:5173', wait_until='networkidle', timeout=30000)
+        await page.goto('http://localhost:5166', wait_until='networkidle', timeout=30000)
         await asyncio.sleep(2)
 
         import os

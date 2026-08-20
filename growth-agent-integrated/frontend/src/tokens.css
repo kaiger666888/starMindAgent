@@ -1,36 +1,88 @@
 /* 「伴你成长」学习手账设计 token —— 全局共享
  * 两视图(探索/档案)共享 paper/ink/serif,避免割裂
  * 活跃信号用墨蓝(settled 用陶土棕),语义化非装饰
+ *
+ * 本轮:正文 markdown 渲染 + 4 套阅读主题 + 3 档字号行距
+ * 设计:--paper/--ink-read 等业务变量引用 --t-* 语义层,
+ *      [data-theme] 覆盖 --t-*, [data-size] 覆盖 --t-fs/--t-lh。
+ *      既有组件只认 --paper/--ink-read,零改动即可享受主题切换。
  */
 
 :root {
-  /* —— Color —— */
-  --paper: #FAF8F3;          /* 暖纸底,全局基调 */
-  --paper-soft: #F3EFE5;     /* 次级区块底 */
-  --ink: #1F2421;            /* 墨黑正文 */
-  --ink-soft: #5B6359;       /* 次要文字/层摘要 */
-  --ink-faint: #9A9388;      /* 占位/计数/时间戳 */
-  --rule: #D9D2C5;           /* 发丝线 */
-  --rule-soft: #E8E1D3;      /* 次级发丝线 */
-  --active: #2B5F8A;         /* 活跃信号:generating/当前层/进行中 */
-  --active-soft: #E6EEF5;    /* 活跃浅底 */
-  --settled: #8B5A3C;        /* 沉淀信号:已理解/层摘要/档案 */
-  --settled-soft: #E8DCCD;   /* 沉淀浅底 */
-  --danger: #B4544A;         /* 警告/深度上限/误删 */
-  --danger-soft: #F6E8E5;
+  /* —— 主题语义层(--t-* 由 [data-theme] 覆盖) —— */
+  --t-paper: #FAF8F3;        /* 暖纸底 */
+  --t-paper-soft: #F3EFE5;   /* 次级区块底 */
+  --t-paper-warm: #F6F1E6;  /* 档案/摘要区更暖一档 */
+  --t-ink: #1F2421;          /* 墨黑标题/强结构 */
+  --t-ink-read: #2A2F2B;     /* 正文墨色(略浅,长读不刺眼) */
+  --t-ink-soft: #5B6359;     /* 次要文字/层摘要 */
+  --t-ink-faint: #9A9388;    /* 占位/计数/时间戳 */
+  --t-rule: #D9D2C5;         /* 发丝线 */
+  --t-rule-soft: #E8E1D3;    /* 次级发丝线 */
+  --t-active: #2B5F8A;       /* 活跃信号:generating/当前层 */
+  --t-active-soft: #E6EEF5;
+  --t-active-ink: #1E4A6E;
+  --t-settled: #8B5A3C;      /* 沉淀信号:已理解/层摘要/档案 */
+  --t-settled-soft: #E8DCCD;
+  --t-danger: #B4544A;
+  --t-danger-soft: #F6E8E5;
+  /* 代码块/引用 的主题相关底色 */
+  --t-code-bg: #F0EBE0;
+  --t-code-ink: #4A3F33;
+  --t-quote-bg: #F4EFE3;
+  --t-quote-border: #C9B89E;
 
-  /* —— 着色档(概念热度,对数1/2/4/8) —— */
+  /* —— 业务变量(引用语义层,既有组件零改动) —— */
+  --paper: var(--t-paper);
+  --paper-soft: var(--t-paper-soft);
+  --paper-warm: var(--t-paper-warm);
+  --ink: var(--t-ink);
+  --ink-read: var(--t-ink-read);
+  --ink-soft: var(--t-ink-soft);
+  --ink-faint: var(--t-ink-faint);
+  --rule: var(--t-rule);
+  --rule-soft: var(--t-rule-soft);
+  --active: var(--t-active);
+  --active-soft: var(--t-active-soft);
+  --active-ink: var(--t-active-ink);
+  --settled: var(--t-settled);
+  --settled-soft: var(--t-settled-soft);
+  --danger: var(--t-danger);
+  --danger-soft: var(--t-danger-soft);
+  --code-bg: var(--t-code-bg);
+  --code-ink: var(--t-code-ink);
+  --quote-bg: var(--t-quote-bg);
+  --quote-border: var(--t-quote-border);
+
+  /* —— 着色档(概念热度,对数1/2/4/8,跨主题通用) —— */
   --tier-gray: #9ca3af;
   --tier-green: #22c55e;
-  --tier-red-1: #fca5a5;     /* 回访,浅 */
+  --tier-red-1: #fca5a5;
   --tier-red-2: #f87171;
   --tier-red-3: #ef4444;
-  --tier-red-4: #b91c1c;     /* 反复下钻,深 */
+  --tier-red-4: #b91c1c;
 
   /* —— Typography —— */
-  --serif: "Source Serif 4", "Songti SC", "STSong", Georgia, serif;
+  --serif: "Source Serif 4", "Source Serif Pro", "Songti SC", "STSong", "Source Han Serif SC", "Noto Serif CJK SC", Georgia, serif;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   --mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+
+  /* —— 阅读尺度(--t-fs/--t-lh 由 [data-size] 覆盖) —— */
+  --t-fs-body: 15px;
+  --t-lh-body: 1.9;
+  --t-fs-h1: 18px;
+  --t-fs-h2: 15px;
+  --fs-display: 24px;
+  --fs-h1: var(--t-fs-h1);
+  --fs-h2: var(--t-fs-h2);
+  --fs-body: var(--t-fs-body);
+  --fs-meta: 12px;
+  --fs-caption: 11px;
+  --fs-micro: 10px;
+  --lh-body: var(--t-lh-body);
+  --lh-tight: 1.4;
+  --tracking-body: 0.01em;
+  --tracking-eyebrow: 0.12em;
 
   /* —— Spacing —— */
   --space-1: 4px;
@@ -39,11 +91,100 @@
   --space-4: 16px;
   --space-5: 20px;
   --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
 
   /* —— Radius —— */
   --r-sm: 4px;
   --r-md: 6px;
+  --r-lg: 8px;
   --r-pill: 999px;
+}
+
+/* —— 主题:夜读(深墨蓝黑底 + 暖羊皮纸色字,夜间长读减蓝光) —— */
+[data-theme="夜读"] {
+  --t-paper: #1A1F26;
+  --t-paper-soft: #222830;
+  --t-paper-warm: #262C24;
+  --t-ink: #E8DFCC;
+  --t-ink-read: #D4CBB8;
+  --t-ink-soft: #9A9388;
+  --t-ink-faint: #6B6557;
+  --t-rule: #3A4148;
+  --t-rule-soft: #2E343B;
+  --t-active: #7BA9C9;
+  --t-active-soft: #2A3640;
+  --t-active-ink: #9BC2DC;
+  --t-settled: #C9956E;
+  --t-settled-soft: #3A2E24;
+  --t-danger: #D88A80;
+  --t-danger-soft: #3A2320;
+  --t-code-bg: #232931;
+  --t-code-ink: #C9B89E;
+  --t-quote-bg: #232931;
+  --t-quote-border: #4A3F33;
+}
+
+/* —— 主题:护眼(豆青底 + 墨绿字,偏自然的低饱和绿调) —— */
+[data-theme="护眼"] {
+  --t-paper: #E8EBE3;
+  --t-paper-soft: #DDE2D5;
+  --t-paper-warm: #E0E5D8;
+  --t-ink: #1F2820;
+  --t-ink-read: #2A332B;
+  --t-ink-soft: #5B6359;
+  --t-ink-faint: #8A9080;
+  --t-rule: #B8C0AE;
+  --t-rule-soft: #CBD2C0;
+  --t-active: #3A6B5A;
+  --t-active-soft: #D5E2D8;
+  --t-active-ink: #2A5A4A;
+  --t-settled: #8B6A3C;
+  --t-settled-soft: #E5DCC8;
+  --t-danger: #B4544A;
+  --t-danger-soft: #EDDFDB;
+  --t-code-bg: #DDE2D5;
+  --t-code-ink: #3A4530;
+  --t-quote-bg: #DDE2D5;
+  --t-quote-border: #8A9080;
+}
+
+/* —— 主题:墨(纯墨黑底 + 米色字,最高对比度沉浸阅读) —— */
+[data-theme="墨"] {
+  --t-paper: #0E0F0D;
+  --t-paper-soft: #171815;
+  --t-paper-warm: #1A1B17;
+  --t-ink: #E8E1D0;
+  --t-ink-read: #DDD4C0;
+  --t-ink-soft: #8A8576;
+  --t-ink-faint: #555249;
+  --t-rule: #2A2C28;
+  --t-rule-soft: #20221E;
+  --t-active: #6FA8D6;
+  --t-active-soft: #1E2A33;
+  --t-active-ink: #8FBEDD;
+  --t-settled: #B8805A;
+  --t-settled-soft: #2A2218;
+  --t-danger: #C97068;
+  --t-danger-soft: #2A1815;
+  --t-code-bg: #1A1B17;
+  --t-code-ink: #B8AE99;
+  --t-quote-bg: #1A1B17;
+  --t-quote-border: #4A3F33;
+}
+
+/* —— 字号行距档位(紧凑/舒适默认/宽松) —— */
+[data-size="紧凑"] {
+  --t-fs-body: 14px;
+  --t-lh-body: 1.75;
+  --t-fs-h1: 17px;
+  --t-fs-h2: 14px;
+}
+[data-size="宽松"] {
+  --t-fs-body: 16.5px;
+  --t-lh-body: 2.05;
+  --t-fs-h1: 20px;
+  --t-fs-h2: 16.5px;
 }
 
 @keyframes pulse {
@@ -53,7 +194,36 @@
 
 /* 生长茎节点的"呼吸"——当前活跃层 */
 @keyframes stemBreath {
-  0%, 100% { opacity: 0.7; }
-  50% { opacity: 1; }
+  0%, 100% { opacity: 0.7; box-shadow: 0 0 0 0 rgba(43, 95, 138, 0); }
+  50% { opacity: 1; box-shadow: 0 0 8px 1px rgba(43, 95, 138, 0.18); }
 }
 
+/* 正文流式淡入:answer_delta 到达时新内容轻微浮现,避免突跳 */
+@keyframes inkFadeIn {
+  from { opacity: 0.35; }
+  to { opacity: 1; }
+}
+
+/* 主题切换:颜色平滑过渡,避免硬切 */
+:root, [data-theme], [data-size] {
+  transition: background-color 0.4s ease, color 0.4s ease;
+}
+
+/* 尊重 prefers-reduced-motion:关闭呼吸/淡入动画 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* 暗主题下的代码块文字阴影增强可读性 */
+[data-theme="夜读"] code, [data-theme="墨"] code {
+  text-shadow: 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+/* 阅读区切换器:hover 浮现,移开半隐(不抢正文) */
+.readerControls:hover { opacity: 1 !important; }
+.readerControls:focus-within { opacity: 1 !important; }
+.copyBtn:hover { opacity: 1 !important; color: var(--settled); border-color: var(--settled); }

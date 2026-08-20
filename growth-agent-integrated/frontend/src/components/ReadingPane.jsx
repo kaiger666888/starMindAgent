@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react'
 import * as api from '../api/client'
-import { useStore, updateLayer, clearInflight, setLastViewed, guardAction, goBack, goForward, findNode } from '../store/qaStore'
+import { useStore, updateLayer, clearInflight, setLastViewed, guardAction, goBack, goForward, findNode, getPathNodes } from '../store/qaStore'
 import { renderMarkdown } from './markdownRenderer.jsx'
 import ReaderControls from './ReaderControls'
 
@@ -75,16 +75,58 @@ export default function ReadingPane() {
 }
 
 function ReadingLayer({ layer, depth, inflight, canBack, canForward, historyIdx, historyLen }) {
-  // concepts 用于:正文 markdown 渲染时做内联概念切分(可下钻) + unmatched 提示
-  const concepts = layer.concepts || []
+  // 概念跨层去重：祖先层已标识的概念不在本层重复显示（后端归一化已保证同 concept_id，
+  // 这里按 concept_id 过滤；保留本层新出现的概念。用户主动从 ConceptSummary 跳转不受影响）
+  const concepts = useMemo(() => {
+    const own = layer.concepts || []
+    const seen = new Set()
+    for (const n of getPathNodes()) {
+      if (n.qa_id === layer.qa_id) break  // 到本层为止，本层概念不算"已标识"
+      for (const c of (n.concepts || [])) {
+        if (c.concept_id) seen.add(c.concept_id)
+      }
+    }
+    return seen.size === 0 ? own : own.filter((c) => !c.concept_id || !seen.has(c.concept_id))
+  }, [layer.concepts, layer.qa_id])
   // buildInlineSegments 只为拿 unmatched(渲染逻辑独立,匹配规则与渲染器一致)
   const { unmatched } = useMemo(
     () => buildInlineSegments(layer.answer || '', concepts),
     [layer.answer, concepts]
   )
 
+  // 复制原文 + toast 反馈
+  const [copied, setCopied] = useState(false)
+  async function onCopy() {
+    const text = layer.answer || ''
+    let ok = false
+    try {
+      await navigator.clipboard.writeText(text)
+      ok = true
+    } catch {
+      // 回退:临时 textarea + execCommand(权限被拒/非 HTTPS 环境)
+      try {
+        const ta = document.createElement('textarea')
+        ta.value = text
+        ta.style.position = 'fixed'; ta.style.opacity = '0'
+        document.body.appendChild(ta)
+        ta.select()
+        ok = document.execCommand('copy')
+        document.body.removeChild(ta)
+      } catch { ok = false }
+    }
+    if (ok) {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1800)
+    }
+  }
+
   return (
     <div style={styles.wrap}>
+      {copied && (
+        <div style={styles.toastWrap}>
+          <span style={styles.toast}>已复制原文</span>
+        </div>
+      )}
       <div style={styles.scrollWrap}>
         <ReaderControls />
         {/* 层标签 + 生长茎(签名元素) */}
@@ -115,6 +157,15 @@ function ReadingLayer({ layer, depth, inflight, canBack, canForward, historyIdx,
             )}
             <h1 style={styles.layerQ}>{layer.question}</h1>
             {layer.loading && <span style={styles.loadingDot} title="生成中" />}
+            {layer.answer && (
+              <button
+                className="copyBtn"
+                style={{ ...styles.copyBtn, ...(copied ? styles.copyBtnDone : {}) }}
+                onClick={onCopy}
+                title="复制原始 markdown"
+                aria-label="复制原文"
+              >{copied ? '已复制' : '复制'}</button>
+            )}
           </div>
         </header>
 
@@ -183,32 +234,38 @@ function InlineAnswer({ answer, concepts, layer, inflight }) {
   }
 
   async function onCreateAndDrill(text) {
-    if (!guardAction(null)) return
+    if (!guardAction(layer.qa_id)) return
     setLastViewed(layer.qa_id, null)
     const localId = `local_${Date.now()}`
     try {
-      await api.correctAnnotation(layer.qa_id, null, 'add')
-    } catch (e) { /* 后端 add 需 concept_id,这里用本地 */ }
-    const child = await api.drillDown(layer.qa_id, localId, text)
-    const { pushLayer } = await import('../store/qaStore')
-    pushLayer({
-      qa_id: child.qa_id, question: child.question || text, answer: '',
-      status: 'generating', concepts: [], layer_summary: '', loading: true,
-    })
-    api.incrementExplore(localId)
-    api.subscribeStream(child.qa_id, {
-      answer_delta: (ev) => {
-        const cur = findNode(child.qa_id)
-        updateLayer(child.qa_id, { answer: (cur?.answer || '') + ev.text })
-      },
-      status: (ev) => updateLayer(child.qa_id, { status: ev.status }),
-      concepts: (ev) => updateLayer(child.qa_id, { concepts: ev.concepts }),
-      layer_summary: (ev) => updateLayer(child.qa_id, { layer_summary: ev.layer_summary }),
-      done: () => { updateLayer(child.qa_id, { loading: false }); clearInflight() },
-      error: () => { updateLayer(child.qa_id, { loading: false }); clearInflight() },
-    })
-    setSelection(null)
-    window.getSelection()?.removeAllRanges()
+      try {
+        await api.correctAnnotation(layer.qa_id, null, 'add')
+      } catch (e) { /* 后端 add 需 concept_id,这里用本地 */ }
+      const child = await api.drillDown(layer.qa_id, localId, text)
+      const { pushLayer } = await import('../store/qaStore')
+      pushLayer({
+        qa_id: child.qa_id, question: child.question || text, answer: '',
+        status: 'generating', concepts: [], layer_summary: '', loading: true,
+      })
+      api.incrementExplore(localId)
+      api.subscribeStream(child.qa_id, {
+        answer_delta: (ev) => {
+          const cur = findNode(child.qa_id)
+          updateLayer(child.qa_id, { answer: (cur?.answer || '') + ev.text })
+        },
+        status: (ev) => updateLayer(child.qa_id, { status: ev.status }),
+        concepts: (ev) => updateLayer(child.qa_id, { concepts: ev.concepts }),
+        layer_summary: (ev) => updateLayer(child.qa_id, { layer_summary: ev.layer_summary }),
+        done: () => { updateLayer(child.qa_id, { loading: false }); clearInflight() },
+        error: () => { updateLayer(child.qa_id, { loading: false }); clearInflight() },
+      })
+    } catch (err) {
+      console.error('[onCreateAndDrill] 下钻失败:', err)
+      clearInflight()
+    } finally {
+      setSelection(null)
+      window.getSelection()?.removeAllRanges()
+    }
   }
 
   return (
@@ -228,50 +285,62 @@ function InlineAnswer({ answer, concepts, layer, inflight }) {
 // —— 内联概念 chip（可点击下钻）——
 function ConceptInline({ concept, inflight, layer, inline }) {
   const [showTip, setShowTip] = useState(false)
+  const [drilling, setDrilling] = useState(false)
   const understood = concept.understood || (concept.explore_count >= 2)
   const tier = tierForCount(concept.explore_count || 0)
   const name = concept.canonical_name || concept.name
 
   async function onDrill() {
-    if (!guardAction(null) || understood) return
+    // guardAction 传当前层 qa_id：本层在途允许，别的层在途才拒（原传 null 导致 inflight 非空即锁死）
+    if (understood || drilling) return
+    if (!guardAction(layer.qa_id)) return
+    setDrilling(true)
     setLastViewed(layer.qa_id, concept.concept_id)
-    const child = await api.drillDown(layer.qa_id, concept.concept_id, name)
-    const { pushLayer } = await import('../store/qaStore')
-    pushLayer({
-      qa_id: child.qa_id, question: child.question || name, answer: '',
-      status: 'generating', concepts: [], layer_summary: '', loading: true,
-    })
-    api.incrementExplore(concept.concept_id)
-    api.subscribeStream(child.qa_id, {
-      answer_delta: (ev) => {
-        const cur = findNode(child.qa_id)
-        updateLayer(child.qa_id, { answer: (cur?.answer || '') + ev.text })
-      },
-      status: (ev) => updateLayer(child.qa_id, { status: ev.status }),
-      concepts: (ev) => updateLayer(child.qa_id, { concepts: ev.concepts }),
-      layer_summary: (ev) => updateLayer(child.qa_id, { layer_summary: ev.layer_summary }),
-      done: () => { updateLayer(child.qa_id, { loading: false }); clearInflight() },
-      error: () => { updateLayer(child.qa_id, { loading: false }); clearInflight() },
-    })
+    try {
+      const child = await api.drillDown(layer.qa_id, concept.concept_id, name)
+      const { pushLayer } = await import('../store/qaStore')
+      pushLayer({
+        qa_id: child.qa_id, question: child.question || name, answer: '',
+        status: 'generating', concepts: [], layer_summary: '', loading: true,
+      })
+      api.incrementExplore(concept.concept_id)
+      api.subscribeStream(child.qa_id, {
+        answer_delta: (ev) => {
+          const cur = findNode(child.qa_id)
+          updateLayer(child.qa_id, { answer: (cur?.answer || '') + ev.text })
+        },
+        status: (ev) => updateLayer(child.qa_id, { status: ev.status }),
+        concepts: (ev) => updateLayer(child.qa_id, { concepts: ev.concepts }),
+        layer_summary: (ev) => updateLayer(child.qa_id, { layer_summary: ev.layer_summary }),
+        done: () => { updateLayer(child.qa_id, { loading: false }); clearInflight() },
+        error: () => { updateLayer(child.qa_id, { loading: false }); clearInflight() },
+      })
+    } catch (err) {
+      console.error('[onDrill] 下钻失败:', err)
+      clearInflight()
+    } finally {
+      setDrilling(false)
+    }
   }
 
+  const busy = drilling
   if (inline) {
-    // 内联在正文里:墨蓝下划点(未探索)/陶土棕虚线(已理解),不抢正文
+    // 内联在正文里:圆角按钮高亮(墨蓝浅底/陶土棕已理解),不抢正文
     const understoodStyle = understood ? {
+      background: 'var(--settled-soft)',
       color: 'var(--settled)',
-      textDecoration: 'underline',
-      textDecorationStyle: 'dashed',
-      textDecorationColor: 'var(--settled)',
-      textDecorationThickness: '1px',
-      textUnderlineOffset: '4px',
+      border: '1px solid var(--settled-soft)',
       cursor: 'default',
+    } : busy ? {
+      background: 'var(--active-soft)',
+      color: 'var(--active-ink)',
+      border: '1px solid var(--active-soft)',
+      cursor: 'progress',
+      opacity: 0.7,
     } : {
-      color: 'var(--active)',
-      textDecoration: 'underline',
-      textDecorationStyle: 'dotted',
-      textDecorationColor: 'var(--active)',
-      textDecorationThickness: '1.5px',
-      textUnderlineOffset: '4px',
+      background: 'var(--active-soft)',
+      color: 'var(--active-ink)',
+      border: '1px solid var(--active-soft)',
       cursor: 'pointer',
     }
     return (
@@ -280,10 +349,10 @@ function ConceptInline({ concept, inflight, layer, inline }) {
         onMouseEnter={() => setShowTip(true)}
         onMouseLeave={() => setShowTip(false)}
         onClick={onDrill}
-        title={understood ? '已理解' : '点击下钻'}
+        title={understood ? '已理解' : (busy ? '下钻中…' : '点击下钻')}
       >
-        {name}
-        {showTip && (
+        {busy ? `${name}…` : name}
+        {showTip && !busy && (
           <span style={styles.tooltip}>
             {understood ? '已理解' : `点击下钻 · 置信度 ${(concept.confidence * 100).toFixed(0)}%`}
           </span>
@@ -298,13 +367,13 @@ function ConceptInline({ concept, inflight, layer, inline }) {
         ...styles.chip,
         background: understood ? 'var(--settled-soft)' : TIER_COLOR[tier],
         color: understood ? 'var(--settled)' : '#fff',
-        opacity: understood ? 0.6 : 1,
-        cursor: understood ? 'not-allowed' : 'pointer',
+        opacity: understood ? 0.6 : (busy ? 0.6 : 1),
+        cursor: understood ? 'not-allowed' : (busy ? 'progress' : 'pointer'),
       }}
       onClick={onDrill}
-      disabled={understood}
+      disabled={understood || busy}
     >
-      {name}
+      {busy ? `${name}…` : name}
     </button>
   )
 }
@@ -401,6 +470,30 @@ const styles = {
     borderLeft: '1px solid var(--rule-soft)', borderRight: '1px solid var(--rule-soft)',
     lineHeight: '22px',
   },
+  // 复制原文按钮:mono 小字,低透明度 hover 浮现,陶土棕"已复制"反馈
+  copyBtn: {
+    flexShrink: 0, marginLeft: 'auto', padding: '3px 10px',
+    border: '1px solid var(--rule)', borderRadius: 'var(--r-sm)',
+    background: 'var(--paper)', color: 'var(--ink-soft)',
+    fontFamily: 'var(--mono)', fontSize: 10.5, cursor: 'pointer',
+    letterSpacing: '0.04em', opacity: 0.5, transition: 'all 0.15s',
+  },
+  copyBtnDone: {
+    color: 'var(--settled)', border: '1px solid var(--settled)', opacity: 1,
+    background: 'var(--settled-soft)',
+  },
+  // 复制成功 toast:顶部居中浮现
+  toastWrap: {
+    position: 'fixed', top: 72, left: 0, right: 0, zIndex: 50,
+    display: 'flex', justifyContent: 'center', pointerEvents: 'none',
+  },
+  toast: {
+    background: 'var(--ink)', color: 'var(--paper)',
+    padding: '6px 16px', borderRadius: 'var(--r-pill)',
+    fontFamily: 'var(--mono)', fontSize: 12, letterSpacing: '0.04em',
+    boxShadow: '0 4px 16px rgba(0,0,0,0.18)',
+    animation: 'inkFadeIn 0.2s ease-out',
+  },
   layerQ: {
     fontFamily: 'var(--serif)', fontSize: 18, fontWeight: 600, color: 'var(--ink)',
     lineHeight: 1.4, flex: 1, margin: 0, letterSpacing: '0.005em',
@@ -419,7 +512,9 @@ const styles = {
   generating: { color: 'var(--ink-soft)', fontStyle: 'italic', fontFamily: 'var(--serif)', fontSize: 'var(--fs-body)' },
   inline: {
     fontWeight: 500, position: 'relative',
-    transition: 'color 0.15s, text-decoration-color 0.15s',
+    display: 'inline', padding: '1px 7px', margin: '0 1px',
+    borderRadius: 'var(--r-pill)', fontSize: '0.92em',
+    transition: 'background 0.15s, color 0.15s, border-color 0.15s',
   },
   tooltip: {
     position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)',

@@ -4,6 +4,7 @@ import {
   useStore, pushLayer, updateLayer, popToLayer, setLastViewed,
   clearInflight, guardAction, setActiveSession, resetStack, findNode, setRoot,
 } from '../store/qaStore'
+import ConceptSummary from './ConceptSummary'
 
 const MAX_DEPTH = 6
 
@@ -23,13 +24,17 @@ export default function TreeView() {
 
   async function startNewTree() {
     if (!question.trim()) return
-    const uid = localStorage.getItem('starMindAgent.uid') || 'default'
-    const qa = await api.startQA(question, null, null, uid)
-    setActiveSession(qa.session_id)
-    resetStack()  // 开新树：清空旧探索栈
-    pushLayer({ qa_id: qa.qa_id, question, answer: '', status: 'generating', concepts: [], layer_summary: '', loading: true })
-    subscribe(qa.qa_id)
-    setQuestion('')
+    try {
+      const uid = localStorage.getItem('starMindAgent.uid') || 'default'
+      const qa = await api.startQA(question, null, null, uid)
+      setActiveSession(qa.session_id)
+      resetStack()  // 开新树：清空旧探索栈
+      pushLayer({ qa_id: qa.qa_id, question, answer: '', status: 'generating', concepts: [], layer_summary: '', loading: true })
+      subscribe(qa.qa_id)
+      setQuestion('')
+    } catch (err) {
+      console.error('[startNewTree] 失败:', err)
+    }
   }
 
   function subscribe(qaId) {
@@ -121,6 +126,8 @@ export default function TreeView() {
           />
         )}
       </nav>
+
+      <ConceptSummary />
     </aside>
   )
 }
@@ -132,6 +139,10 @@ function TreeNode({ node, depth, currentPath, onSwitch }) {
   const onPath = currentPath.includes(node.qa_id)  // 在当前路径上
   const stemColor = isCurrent ? 'var(--active)' : onPath ? 'var(--rule)' : 'var(--rule-soft)'
   const hasChildren = node.children && node.children.length > 0
+  // 该层概念完成度:已理解数 / 总数(无概念则不显示)
+  const concepts = node.concepts || []
+  const understoodN = concepts.filter((c) => c.understood || (c.explore_count >= 2)).length
+  const layerPct = concepts.length > 0 ? understoodN / concepts.length : null
   return (
     <div style={styles.treeNode}>
       <button
@@ -153,6 +164,17 @@ function TreeNode({ node, depth, currentPath, onSwitch }) {
         </div>
         {node.layer_summary && (
           <div style={styles.preview}>{node.layer_summary}</div>
+        )}
+        {/* 该层概念完成度进度条:已理解概念/总概念 */}
+        {layerPct !== null && (
+          <div style={styles.layerProgRow}>
+            <span style={styles.layerProgLabel}>
+              概念 {understoodN}/{concepts.length}
+            </span>
+            <span style={styles.layerProgBar}>
+              <span style={{ ...styles.layerProgFill, width: `${layerPct * 100}%` }} />
+            </span>
+          </div>
         )}
       </button>
       {/* 子分支：当前路径上的层展开 children，非路径上的层也展开（树导航可见） */}
@@ -222,5 +244,20 @@ const styles = {
     fontSize: 10.5, color: 'var(--ink-soft)', fontStyle: 'italic', lineHeight: 1.45,
     fontFamily: 'var(--serif)', display: '-webkit-box', WebkitLineClamp: 2,
     WebkitBoxOrient: 'vertical', overflow: 'hidden', marginTop: 2,
+  },
+  // 该层概念完成度进度条
+  layerProgRow: {
+    display: 'flex', alignItems: 'center', gap: 6, marginTop: 4,
+  },
+  layerProgLabel: {
+    fontFamily: 'var(--mono)', fontSize: 8.5, color: 'var(--ink-faint)',
+    letterSpacing: '0.02em', flexShrink: 0,
+  },
+  layerProgBar: {
+    flex: 1, height: 2, background: 'var(--rule-soft)', borderRadius: 1, overflow: 'hidden',
+  },
+  layerProgFill: {
+    height: '100%', background: 'var(--settled)', borderRadius: 1,
+    transition: 'width 0.4s ease',
   },
 }
