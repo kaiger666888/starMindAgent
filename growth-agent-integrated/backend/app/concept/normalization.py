@@ -221,14 +221,16 @@ class ConceptNormalizer:
     async def _alias_exact_match(self, name: str, session_id: str) -> dict | None:
         async with session_scope() as s:
             # canonical_name 精确匹配 或 aliases JSONB 包含
+            # 用 first() 而非 scalar_one_or_none()：历史数据可能有重复节点
+            # （同名 canonical 或多节点别名含同一 name），取第一个匹配即可归一化
             row = (
                 await s.execute(
                     select(ConceptNode).where(
                         (ConceptNode.canonical_name == name)
                         | ConceptNode.aliases.op('@>')(cast(literal(f'["{name}"]'), JSONB))
-                    )
+                    ).limit(1)
                 )
-            ).scalar_one_or_none()
+            ).scalars().first()
             if row:
                 return {"concept_id": row.concept_id,
                         "matched_alias": name,
