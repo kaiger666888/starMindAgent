@@ -143,6 +143,10 @@ function TreeNode({ node, depth, currentPath, onSwitch }) {
   const concepts = node.concepts || []
   const understoodN = concepts.filter((c) => c.understood || (c.explore_count >= 2)).length
   const layerPct = concepts.length > 0 ? understoodN / concepts.length : null
+  // 下钻准备度:后端为这层检索材料准备好了多少(context.preparation 0-1)
+  // 优先于概念完成度展示——准备度反映"材料就绪",概念完成度是回退
+  const prep = node.context?.preparation
+  const hasPrep = typeof prep === 'number' && prep > 0
   return (
     <div style={styles.treeNode}>
       <button
@@ -165,8 +169,23 @@ function TreeNode({ node, depth, currentPath, onSwitch }) {
         {node.layer_summary && (
           <div style={styles.preview}>{node.layer_summary}</div>
         )}
-        {/* 该层概念完成度进度条:已理解概念/总概念 */}
-        {layerPct !== null && (
+        {/* 下钻准备度进度条:后端为这层关键词检索材料准备好了多少。
+            准备中=墨蓝(活跃信号),就绪(100%)=陶土棕(沉淀)。
+            无 context 的层(提问树根/未导入材料)回退到概念完成度。 */}
+        {hasPrep ? (
+          <div style={styles.layerProgRow}>
+            <span style={styles.layerProgLabel}>
+              准备 {Math.round(prep * 100)}%
+            </span>
+            <span style={styles.layerProgBar}>
+              <span style={{
+                ...styles.layerProgFill,
+                width: `${prep * 100}%`,
+                background: prep >= 1 ? 'var(--settled)' : 'var(--active)',
+              }} />
+            </span>
+          </div>
+        ) : layerPct !== null && (
           <div style={styles.layerProgRow}>
             <span style={styles.layerProgLabel}>
               概念 {understoodN}/{concepts.length}

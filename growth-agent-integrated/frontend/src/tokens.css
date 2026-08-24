@@ -8,6 +8,9 @@
  *      既有组件只认 --paper/--ink-read,零改动即可享受主题切换。
  */
 
+/* 全局盒模型:width 含 padding/border,三栏 280/380 为真实占地宽度 */
+*, *::before, *::after { box-sizing: border-box; }
+
 :root {
   /* —— 主题语义层(--t-* 由 [data-theme] 覆盖) —— */
   --t-paper: #FAF8F3;        /* 暖纸底 */

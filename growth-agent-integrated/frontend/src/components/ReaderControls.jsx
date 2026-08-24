@@ -75,6 +75,7 @@ export default function ReaderControls() {
             }}
             onClick={() => onSize(s)}
             title={s}
+            aria-label={s}
             aria-pressed={size === s}
           >{s === '紧凑' ? 'A−' : s === '宽松' ? 'A+' : 'A'}</button>
         ))}

@@ -49,6 +49,7 @@ export default function ReadingPane() {
   if (!current) {
     return (
       <div style={styles.empty}>
+        <ReaderControls />
         <div style={styles.emptyStem} aria-hidden="true" />
         <div style={styles.emptyTitle}>从一个问题开始</div>
         <div style={styles.emptyDesc}>
@@ -75,24 +76,27 @@ export default function ReadingPane() {
 }
 
 function ReadingLayer({ layer, depth, inflight, canBack, canForward, historyIdx, historyLen }) {
-  // 概念跨层去重：祖先层已标识的概念不在本层重复显示（后端归一化已保证同 concept_id，
-  // 这里按 concept_id 过滤；保留本层新出现的概念。用户主动从 ConceptSummary 跳转不受影响）
-  const concepts = useMemo(() => {
-    const own = layer.concepts || []
-    const seen = new Set()
-    for (const n of getPathNodes()) {
-      if (n.qa_id === layer.qa_id) break  // 到本层为止，本层概念不算"已标识"
-      for (const c of (n.concepts || [])) {
-        if (c.concept_id) seen.add(c.concept_id)
-      }
-    }
-    return seen.size === 0 ? own : own.filter((c) => !c.concept_id || !seen.has(c.concept_id))
-  }, [layer.concepts, layer.qa_id])
-  // buildInlineSegments 只为拿 unmatched(渲染逻辑独立,匹配规则与渲染器一致)
+  // concepts 用于:正文 markdown 渲染时做内联概念切分(可下钻) + unmatched 提示
+  // 内联概念保留全部(正文自然出现的，是本层"自选概念"，和上一层展示一致)；
+  // 跨层去重只对 unmatched 块生效(抽取了但正文没出现的，避免跨层重复罗列)
+  const concepts = layer.concepts || []
   const { unmatched } = useMemo(
     () => buildInlineSegments(layer.answer || '', concepts),
     [layer.answer, concepts]
   )
+  // unmatched 跨层去重：祖先层已标识的概念不在本层 unmatched 块重复显示
+  const unmatchedDedup = useMemo(() => {
+    if (unmatched.length === 0) return unmatched
+    const seen = new Set()
+    for (const n of getPathNodes()) {
+      if (n.qa_id === layer.qa_id) break  // 到本层为止
+      for (const c of (n.concepts || [])) {
+        if (c.concept_id) seen.add(c.concept_id)
+      }
+    }
+    if (seen.size === 0) return unmatched
+    return unmatched.filter((c) => !c.concept_id || !seen.has(c.concept_id))
+  }, [unmatched, layer.qa_id])
 
   // 复制原文 + toast 反馈
   const [copied, setCopied] = useState(false)
@@ -169,6 +173,11 @@ function ReadingLayer({ layer, depth, inflight, canBack, canForward, historyIdx,
           </div>
         </header>
 
+        {/* 下钻相关材料上下文 —— 克制卷宗索引气质,不喧宾夺主 */}
+        {layer.context && layer.context.snippets && layer.context.snippets.length > 0 && (
+          <ContextBlock context={layer.context} />
+        )}
+
         {/* 回答正文 + 内联概念 —— markdown 渲染,衬线书本感 */}
         <article style={styles.answer}>
           {layer.answer ? (
@@ -189,11 +198,11 @@ function ReadingLayer({ layer, depth, inflight, canBack, canForward, historyIdx,
         )}
 
         {/* 未匹配的概念(抽取了但正文没出现) */}
-        {unmatched.length > 0 && (
+        {unmatchedDedup.length > 0 && (
           <div style={styles.unmatchedBlock}>
             <div style={styles.unmatchedLabel}>抽取但正文未出现</div>
             <div style={styles.unmatchedChips}>
-              {unmatched.map((c) => (
+              {unmatchedDedup.map((c) => (
                 <ConceptInline key={c.concept_id} concept={c} inflight={inflight} layer={layer} />
               ))}
             </div>
@@ -204,6 +213,55 @@ function ReadingLayer({ layer, depth, inflight, canBack, canForward, historyIdx,
         <div style={styles.hint}>选中正文里的词，可标为概念并下钻</div>
       </div>
     </div>
+  )
+}
+
+// —— 下钻相关材料上下文:从原文检索的段落,克制展示,不喧宾夺主 ——
+// 视觉层级低于正文:暖纸底 + 陶土棕细左边线 + 衬线小号,带"相关材料"标签
+// 篇幅收窄:默认最多2段,每段截断~120字,超出折叠
+function truncateText(s, n) {
+  if (!s) return ''
+  return s.length > n ? s.slice(0, n) + '…' : s
+}
+function ContextBlock({ context }) {
+  const [expanded, setExpanded] = useState(false)
+  const snippets = context.snippets || []
+  const preparation = context.preparation || 0
+  const matched = context.matched_chunks || 0
+  const total = context.total_chunks || 0
+  const MAX_INITIAL = 2
+  const CHAR_LIMIT = 120
+  const shown = expanded ? snippets : snippets.slice(0, MAX_INITIAL)
+  const hiddenCount = snippets.length - MAX_INITIAL
+  return (
+    <section style={styles.contextBlock} aria-label="相关学习材料">
+      <div style={styles.contextHead}>
+        <span style={styles.contextLabel}>相关材料</span>
+        <span style={styles.contextMeta}>
+          {matched}/{total} 段相关 · 准备度 {Math.round(preparation * 100)}%
+        </span>
+      </div>
+      <div style={styles.contextBody}>
+        {shown.map((s, i) => {
+          const text = expanded ? s : truncateText(s, CHAR_LIMIT)
+          return (
+            <div key={i} style={styles.contextSnippet}>
+              {renderMarkdown(text, [], () => null)}
+            </div>
+          )
+        })}
+        {!expanded && hiddenCount > 0 && (
+          <button style={styles.contextToggle} onClick={() => setExpanded(true)}>
+            展开剩余 {hiddenCount} 段
+          </button>
+        )}
+        {expanded && snippets.length > MAX_INITIAL && (
+          <button style={styles.contextToggle} onClick={() => setExpanded(false)}>
+            收起
+          </button>
+        )}
+      </div>
+    </section>
   )
 }
 
@@ -238,14 +296,14 @@ function InlineAnswer({ answer, concepts, layer, inflight }) {
     setLastViewed(layer.qa_id, null)
     const localId = `local_${Date.now()}`
     try {
-      try {
-        await api.correctAnnotation(layer.qa_id, null, 'add')
-      } catch (e) { /* 后端 add 需 concept_id,这里用本地 */ }
+      // 本地选中文本还没有 concept_id，correctAnnotation(add) 需要 UUID concept_id
+      // 必 422，跳过；等子层 SSE 抽取出真概念后由后端归一化建节点
       const child = await api.drillDown(layer.qa_id, localId, text)
       const { pushLayer } = await import('../store/qaStore')
       pushLayer({
         qa_id: child.qa_id, question: child.question || text, answer: '',
         status: 'generating', concepts: [], layer_summary: '', loading: true,
+        context: child.context || null,
       })
       api.incrementExplore(localId)
       api.subscribeStream(child.qa_id, {
@@ -302,6 +360,7 @@ function ConceptInline({ concept, inflight, layer, inline }) {
       pushLayer({
         qa_id: child.qa_id, question: child.question || name, answer: '',
         status: 'generating', concepts: [], layer_summary: '', loading: true,
+        context: child.context || null,
       })
       api.incrementExplore(concept.concept_id)
       api.subscribeStream(child.qa_id, {
@@ -346,6 +405,8 @@ function ConceptInline({ concept, inflight, layer, inline }) {
     return (
       <span
         style={{ ...styles.inline, ...understoodStyle }}
+        data-testid="concept-chip"
+        data-variant="inline"
         onMouseEnter={() => setShowTip(true)}
         onMouseLeave={() => setShowTip(false)}
         onClick={onDrill}
@@ -363,6 +424,8 @@ function ConceptInline({ concept, inflight, layer, inline }) {
   // 非内联（unmatched 块）：pill 样式
   return (
     <button
+      data-testid="concept-chip"
+      data-variant="pill"
       style={{
         ...styles.chip,
         background: understood ? 'var(--settled-soft)' : TIER_COLOR[tier],
@@ -427,7 +490,7 @@ const styles = {
   // 阅读区:max-width 680(中文长行 40-55 字舒适),上下加大呼吸
   scrollWrap: { maxWidth: 680, margin: '0 auto', padding: '32px 36px 56px', width: '100%', minHeight: '100%', position: 'relative' },
   // 空态:加一根短茎暗示"等一个问题落下"
-  empty: { flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: 48, background: 'var(--paper)', gap: 14 },
+  empty: { flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: 48, background: 'var(--paper)', gap: 14, position: 'relative' },
   emptyStem: { width: 3, height: 28, borderRadius: 2, background: 'var(--rule)', marginBottom: 4 },
   emptyTitle: { fontFamily: 'var(--serif)', fontSize: 20, color: 'var(--ink)', fontWeight: 600, letterSpacing: '0.01em' },
   emptyDesc: { fontSize: 13.5, color: 'var(--ink-soft)', lineHeight: 1.75, textAlign: 'center', maxWidth: 380, fontFamily: 'var(--serif)' },
@@ -537,6 +600,35 @@ const styles = {
     padding: '0 6px', flexShrink: 0, lineHeight: 1.9, fontStyle: 'normal',
   },
   summaryText: { flex: 1 },
+  // —— 下钻相关材料上下文:卷宗索引气质,层级低于正文 ——
+  contextBlock: {
+    margin: '0 0 20px', padding: '12px 16px',
+    background: 'var(--paper-warm)', borderLeft: '2px solid var(--settled)',
+    borderRadius: 'var(--r-sm)', opacity: 0.92,
+  },
+  contextHead: {
+    display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+    marginBottom: 8, paddingBottom: 6, borderBottom: '1px dotted var(--rule-soft)',
+  },
+  contextLabel: {
+    fontFamily: 'var(--mono)', fontSize: 9.5, color: 'var(--settled)',
+    textTransform: 'uppercase', letterSpacing: '0.1em',
+  },
+  contextMeta: {
+    fontFamily: 'var(--mono)', fontSize: 9.5, color: 'var(--ink-faint)',
+    letterSpacing: '0.04em',
+  },
+  contextBody: { display: 'flex', flexDirection: 'column', gap: 8 },
+  contextSnippet: {
+    fontFamily: 'var(--serif)', fontSize: 13, lineHeight: 1.65,
+    color: 'var(--ink-soft)', letterSpacing: '0.01em',
+    padding: 0, margin: 0,
+  },
+  contextToggle: {
+    alignSelf: 'flex-start', background: 'none', border: 'none', cursor: 'pointer',
+    fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--settled)',
+    letterSpacing: '0.04em', padding: '2px 0', marginTop: 2,
+  },
   // 未匹配概念块
   unmatchedBlock: { marginTop: 20, padding: '10px 14px', background: 'var(--paper-soft)', borderRadius: 'var(--r-md)' },
   unmatchedLabel: {

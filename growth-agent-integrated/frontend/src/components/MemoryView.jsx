@@ -247,6 +247,39 @@ function SessionItem({ sess, idx, expanded, onToggle }) {
     }
   }
 
+  const isImported = sess.domain_tag === 'imported'
+
+  // 导入文件:卷宗式折叠——标题做主标,展开只显摘要+入口,不铺全文
+  if (isImported) {
+    return (
+      <li style={s.timelineItem}>
+        <button style={{ ...s.timelineBtn, ...s.importedBtn }} onClick={onToggle}>
+          <span style={s.importedMark} aria-label="导入文件">卷</span>
+          <span style={s.timelineDate}>{formatTime(sess.created_at)}</span>
+          <span style={s.importedTitle}>{sess.last_question || '（未命名材料）'}</span>
+          <span style={s.timelineCount}>{sess.qa_count} 轮</span>
+          <span style={s.chevron}>{expanded ? '−' : '+'}</span>
+        </button>
+        {expanded && (
+          <div style={s.timelineDetail}>
+            {loadingD && !detail ? (
+              <div style={s.empty}>载入中…</div>
+            ) : detail && detail.steps && detail.steps.length > 0 ? (
+              <ImportedDetail
+                detail={detail}
+                resuming={resuming}
+                resumeErr={resumeErr}
+                onResume={onResume}
+              />
+            ) : (
+              <div style={s.empty}>无步骤数据</div>
+            )}
+          </div>
+        )}
+      </li>
+    )
+  }
+
   return (
     <li style={s.timelineItem}>
       <button style={s.timelineBtn} onClick={onToggle}>
@@ -271,7 +304,6 @@ function SessionItem({ sess, idx, expanded, onToggle }) {
                   </div>
                 </div>
               ))}
-              {/* 继续探索:把该会话恢复成探索树,从最深处继续下钻 */}
               <div style={s.resumeRow}>
                 <button style={s.resumeBtn} onClick={onResume} disabled={resuming}>
                   {resuming ? '正在恢复…' : '继续探索 →'}
@@ -285,6 +317,74 @@ function SessionItem({ sess, idx, expanded, onToggle }) {
         </div>
       )}
     </li>
+  )
+}
+
+// 导入文件展开详情:元信息条 + content_plain 摘要(不铺全文) + 子层探索索引
+function ImportedDetail({ detail, resuming, resumeErr, onResume }) {
+  const steps = detail.steps || []
+  const root = steps[0]  // L0 = 导入根层, question=文件名, answer=content_plain
+  // 下钻出来的子层:用结构过滤(parent_qa_id 非空)而非 depth。
+  // 导入材料根层 depth=0,子层 depth=1;提问树根层 depth=1,子层 depth=2。
+  // 用 depth>=2 会漏掉导入材料的第一层下钻,故按 parent_qa_id 判定更稳。
+  const children = steps.filter((st) => st.parent_qa_id)
+  const charCount = (root.answer || '').length
+  // 已抽取的概念数:所有层 extracted_concept_ids 去重
+  const conceptIds = new Set()
+  for (const st of steps) for (const id of (st.extracted_concept_ids || [])) conceptIds.add(id)
+  // 折叠全文,只显前 300 字摘要
+  const [showFull, setShowFull] = useState(false)
+  const fullText = root.answer || ''
+  const preview = showFull ? fullText : truncate(fullText, 300)
+  return (
+    <div>
+      {/* 元信息条 */}
+      <div style={s.importedMeta}>
+        <span style={s.importedMetaItem}>导入 · {charCount.toLocaleString()} 字</span>
+        <span style={s.importedMetaDot}>·</span>
+        <span style={s.importedMetaItem}>{conceptIds.size} 个概念</span>
+        {children.length > 0 && (
+          <>
+            <span style={s.importedMetaDot}>·</span>
+            <span style={s.importedMetaItem}>{children.length} 处下钻</span>
+          </>
+        )}
+      </div>
+      {/* 原文摘要:衬线,克制,不喧宾夺主 */}
+      {fullText && (
+        <div style={s.importedPreview}>
+          <div style={s.importedPreviewLabel}>原文摘要</div>
+          <div style={s.importedPreviewText}>{preview}</div>
+          {fullText.length > 300 && (
+            <button style={s.importedPreviewToggle} onClick={() => setShowFull(!showFull)}>
+              {showFull ? '收起' : `展开全文（${fullText.length.toLocaleString()} 字）`}
+            </button>
+          )}
+        </div>
+      )}
+      {/* 子层探索索引:L2+ 的下钻点 */}
+      {children.length > 0 && (
+        <div style={s.importedChildren}>
+          <div style={s.importedChildrenLabel}>下钻探索 · {children.length}</div>
+          {children.map((st) => (
+            <div key={st.qa_id} style={{ ...s.stepRow, marginLeft: (st.depth - root.depth) * 16 }}>
+              <span style={s.stepDepth}>L{st.depth}</span>
+              <div style={s.stepBody}>
+                <div style={s.stepQ}>{st.question}</div>
+                {st.answer && <div style={s.stepA}>{truncate(st.answer, 120)}</div>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {/* 继续探索:从根层打开这棵树 */}
+      <div style={s.resumeRow}>
+        <button style={s.resumeBtn} onClick={onResume} disabled={resuming}>
+          {resuming ? '正在恢复…' : '在探索视图中打开 →'}
+        </button>
+        {resumeErr && <span style={s.resumeErr}>{resumeErr}</span>}
+      </div>
+    </div>
   )
 }
 
@@ -446,4 +546,54 @@ const s = {
     cursor: 'pointer', transition: 'opacity 0.15s', letterSpacing: '0.02em',
   },
   resumeErr: { fontSize: 11, color: 'var(--danger)', fontFamily: 'var(--mono)' },
+
+  // —— 导入文件:卷宗式折叠(陶土棕"卷"字标记 + 标题主标,展开只显摘要) ——
+  importedBtn: {
+    gap: 8, padding: '16px 4px',
+  },
+  importedMark: {
+    fontFamily: 'var(--serif)', fontSize: 12, fontWeight: 600, color: 'var(--paper)',
+    background: 'var(--settled)', borderRadius: 'var(--r-sm)',
+    width: 22, height: 22, flexShrink: 0,
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    letterSpacing: 0,
+  },
+  importedTitle: {
+    flex: 1, fontSize: 14.5, color: 'var(--ink)', fontFamily: 'var(--serif)',
+    fontWeight: 500, lineHeight: 1.4, letterSpacing: '0.01em',
+    display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+  },
+  // 元信息条:mono 小字,低饱和,卷宗索引气质
+  importedMeta: {
+    display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
+    fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--ink-soft)',
+    letterSpacing: '0.04em', marginBottom: 12, paddingBottom: 10,
+    borderBottom: '1px dotted var(--rule-soft)',
+  },
+  importedMetaItem: { color: 'var(--settled)' },
+  importedMetaDot: { color: 'var(--ink-faint)' },
+  // 原文摘要:暖纸底 + 陶土棕细边,衬线小号,克制不喧宾夺主
+  importedPreview: {
+    background: 'var(--paper-warm)', borderLeft: '2px solid var(--settled)',
+    borderRadius: 'var(--r-sm)', padding: '12px 14px', marginBottom: 14,
+  },
+  importedPreviewLabel: {
+    fontFamily: 'var(--mono)', fontSize: 9.5, color: 'var(--settled)',
+    textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 6,
+  },
+  importedPreviewText: {
+    fontFamily: 'var(--serif)', fontSize: 13, lineHeight: 1.7, color: 'var(--ink-read)',
+    letterSpacing: '0.01em', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+  },
+  importedPreviewToggle: {
+    marginTop: 8, background: 'none', border: 'none', cursor: 'pointer',
+    fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--settled)',
+    letterSpacing: '0.04em', padding: 0,
+  },
+  // 子层探索索引
+  importedChildren: { marginBottom: 4 },
+  importedChildrenLabel: {
+    fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink-faint)',
+    textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8,
+  },
 }
