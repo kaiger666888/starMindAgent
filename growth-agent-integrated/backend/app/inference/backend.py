@@ -223,8 +223,15 @@ class AnthropicBackend:
             "Content-Type": "application/json",
         }
 
-    def _payload(self, messages, stream: bool, max_tokens: int = 2000) -> dict:
+    def _payload(self, messages, stream: bool, max_tokens: int | None = None) -> dict:
         # Anthropic 格式: system 单独字段, messages 只含 user/assistant
+        # 网关 glm-5.3 强制思考模式且思考 token 计入 max_tokens 预算：
+        # 预算过小（如 2000）会被 thinking 吃光导致正文 0 字（stop=max_tokens）。
+        # 实测长 thinking（~4K token）+ 长正文（1.5K 字）+ sentinel JSON 会撞 8000 顶
+        # （正文流出后截断，sentinel JSON 丢失 -> 概念抽取退兜底），
+        # 故默认放大到 16000，可经 LLM_MAX_TOKENS 覆盖。
+        if max_tokens is None:
+            max_tokens = int(os.getenv("LLM_MAX_TOKENS", "16000"))
         system = ""
         user_msgs = []
         for m in messages:
@@ -254,6 +261,12 @@ class AnthropicBackend:
         async with httpx.AsyncClient(timeout=settings.inference_timeout_s) as client:
             async with client.stream("POST", self.endpoint,
                 headers=self._headers(), json=payload) as resp:
+                if resp.status_code != 200:
+                    body = (await resp.aread()).decode(errors="replace")[:500]
+                    log.error("gateway %s -> %s: %s", self.endpoint,
+                              resp.status_code, body)
+                    raise RuntimeError(f"gateway {resp.status_code}: {body}")
+                stop_reason = None
                 async for line in resp.aiter_lines():
                     if self._aborted:
                         break
@@ -268,8 +281,17 @@ class AnthropicBackend:
                                     text = delta.get("text", "")
                                     if text:
                                         yield text
+                            elif ev.get("type") == "error":
+                                log.error("gateway SSE error event: %s",
+                                          json.dumps(ev, ensure_ascii=False)[:500])
+                            elif ev.get("type") == "message_delta":
+                                stop_reason = ev.get("delta", {}).get("stop_reason")
                         except (json.JSONDecodeError, KeyError, IndexError):
                             continue
+                # 思考吃光 max_tokens 预算 -> 正文缺失（网关强制思考模式下发生过）
+                if stop_reason == "max_tokens":
+                    log.warning("gateway stop_reason=max_tokens "
+                                "(thinking 可能挤占正文预算) model=%s", self.model)
 
     async def extract_only(self, answer_text: str) -> ConceptBlock:
         # 复用 complete_text 拿文本，再 parse
@@ -285,10 +307,14 @@ class AnthropicBackend:
         import httpx
         payload = self._payload(
             [{"role": "system", "content": system}, {"role": "user", "content": user}],
-            stream=False, max_tokens=2000,
+            stream=False,
         )
         async with httpx.AsyncClient(timeout=timeout) as c:
             r = await c.post(self.endpoint, headers=self._headers(), json=payload)
+            if r.status_code != 200:
+                log.error("gateway %s -> %s: %s", self.endpoint,
+                          r.status_code, r.text[:500])
+                r.raise_for_status()
             data = r.json()
         # Anthropic 响应: content 是数组,含 {type: "thinking"|"text", text: "..."}
         content = data.get("content", [])

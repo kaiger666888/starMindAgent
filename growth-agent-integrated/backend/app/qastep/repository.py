@@ -20,6 +20,18 @@ from app.qastep.state_machine import QAStatus, OptimisticLockConflict, IllegalTr
 log = logging.getLogger(__name__)
 
 
+def _is_uuid(v) -> bool:
+    """concept_id 合法性：UUID 才能进 UUID 列（local_* 临时 id 会炸 asyncpg 编码）。"""
+    if not v or not isinstance(v, str) or len(v) != 36:
+        return False
+    try:
+        import uuid as _uuid
+        _uuid.UUID(v)
+        return True
+    except (ValueError, AttributeError):
+        return False
+
+
 @dataclass
 class CreatedQA:
     qa_id: str
@@ -191,11 +203,16 @@ class QAStepRepository:
                 session_id=session_id, parent_qa_id=parent_qa_id,
                 question=question or f"[下钻 concept {concept_id}]",
                 status=QAStatus.GENERATING.value, depth=child_depth,
+                # 子层继承父层 material_id：stream 路由按 material_id 现检索
+                # 相关段落注入 prompt（不污染 question 存库）
+                material_id=parent.material_id,
             )
             s.add(child)
             # 记录 user_click 边（状态一）：source 取父 QAStep 首个已抽取概念，target 为被下钻概念
+            # target 非 UUID（前端"标为概念下钻"的 local_* 临时 id）时跳过建边，
+            # 否则 asyncpg 编码炸 DataError 导致整个 fork 500
             parent_concepts = parent.extracted_concept_ids or []
-            if parent_concepts:
+            if parent_concepts and _is_uuid(concept_id):
                 stmt = pg_insert(ConceptEdge).values(
                     session_id=session_id, source_id=parent_concepts[0],
                     target_id=concept_id, origin="user_click",

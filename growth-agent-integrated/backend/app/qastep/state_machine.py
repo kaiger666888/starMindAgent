@@ -101,6 +101,14 @@ class QAStepPipeline:
         self.repo = repository
         self.rt = QAStepRuntime(qa_id, session_id, question)
 
+    def set_material_context(self, ctx: str | None) -> None:
+        """注入学习材料相关段落,推理 prompt 用,不污染 question 存库。
+
+        转发给 inference session -> InferenceClient,在 stream() 拼 prompt 时用。
+        """
+        if ctx and hasattr(self.inference, "set_material_context"):
+            self.inference.set_material_context(ctx)
+
     async def run(self) -> AsyncIterator[dict]:
         """流式产出事件，供 SSE 推给前端。
 
@@ -246,9 +254,10 @@ class QAStepPipeline:
         )
         user = f"问题：{self.question}\n答案摘要：{answer_text[:600]}\n抽取概念：{names}"
         try:
-            return await backend.complete_text(system, user, timeout=20.0)
+            # 网关 thinking 模式下首个可见 token 前有长思考期，20s 会 ReadTimeout
+            return await backend.complete_text(system, user, timeout=45.0)
         except Exception as e:
-            log.warning("layer summary failed: %s", e)
+            log.warning("layer summary failed qa_id=%s: %r", self.qa_id, e)
             return None
 
     async def _extract_concepts_fallback(self, answer_text: str) -> list[dict] | None:
@@ -275,7 +284,7 @@ class QAStepPipeline:
         user = f"问题：{self.question}\n回答：{answer_text[:1500]}"
         try:
             import json as _json, re
-            raw = await backend.complete_text(system, user, timeout=25.0)
+            raw = await backend.complete_text(system, user, timeout=60.0)
             # 去掉 markdown 代码块包裹
             cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.IGNORECASE)
             cleaned = re.sub(r"\s*```\s*$", "", cleaned).strip()
@@ -291,7 +300,7 @@ class QAStepPipeline:
                 for it in items if it.get("name")
             ]
         except Exception as e:
-            log.warning("extract fallback failed: %s", e)
+            log.warning("extract fallback failed qa_id=%s: %r", self.qa_id, e)
             return None
 
     async def drill_down(self, parent_qa_id: str, concept_id: str,

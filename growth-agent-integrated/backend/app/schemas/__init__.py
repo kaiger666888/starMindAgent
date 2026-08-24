@@ -47,6 +47,7 @@ class QAStepOut(BaseModel):
     depth: int
     extracted_concept_ids: list[str] = []
     confidence: Optional[float] = None
+    context: Optional[dict] = None  # 下钻时检索到的材料相关段落+准备度（前端展示"相关材料"块+进度条）
 
 
 class DriftDownRequest(BaseModel):

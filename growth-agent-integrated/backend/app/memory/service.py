@@ -62,7 +62,7 @@ async def list_sessions(user_id: str, limit: int = 50) -> list[dict]:
         ).all()
         cnt_map = {r.session_id: r.cnt for r in rows}
         last_map = {r.session_id: r.last_at for r in rows}
-        # 每个会话最后一条 question
+        # 每个会话最后一条 question（普通会话的展示标题）
         last_q_rows = (
             await s.execute(
                 select(QAStep.session_id, QAStep.question, QAStep.created_at)
@@ -73,6 +73,18 @@ async def list_sessions(user_id: str, limit: int = 50) -> list[dict]:
         last_q = {}
         for r in last_q_rows:
             last_q.setdefault(r.session_id, r.question)
+        # 导入文件会话:用 L0 根层(parent_qa_id IS NULL)的 question 作标题,
+        # 而非 last_question。根因:drilldown 时 routes_qa.py 把材料上下文拼进
+        # 子层 question 存库(【参考学习材料相关段落】...【用户问题】...),
+        # last_question 被这个污染串覆盖。L0 根层的 question 才是干净文件名。
+        root_q_rows = (
+            await s.execute(
+                select(QAStep.session_id, QAStep.question)
+                .where(QAStep.session_id.in_(session_ids))
+                .where(QAStep.parent_qa_id.is_(None))
+            )
+        ).all()
+        root_q = {r.session_id: r.question for r in root_q_rows}
         return [
             {
                 "session_id": str(sess.session_id),
@@ -80,7 +92,8 @@ async def list_sessions(user_id: str, limit: int = 50) -> list[dict]:
                 "domain_tag": sess.domain_tag,
                 "created_at": sess.created_at.isoformat() if sess.created_at else None,
                 "qa_count": cnt_map.get(sess.session_id, 0),
-                "last_question": last_q.get(sess.session_id),
+                # 导入文件:用 L0 根层干净标题;普通会话:用最后一条 question
+                "last_question": root_q.get(sess.session_id) if sess.domain_tag == "imported" else last_q.get(sess.session_id),
             }
             for sess in sessions
         ]

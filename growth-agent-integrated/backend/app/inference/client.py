@@ -55,6 +55,9 @@ class InferenceClient:
         self._aborted = False
         # 熔断器由 harness 注入；这里只暴露端点供 harness 统计
         self._breaker = None  # type: ignore[var-annotated]
+        # 学习材料相关段落：按 question 检索出的 chunk，拼 prompt 时用，
+        # 不进 question 存库（避免子层标题被污染成几百字拼接串）
+        self._material_context: str | None = None
 
     # —— Protocol 字段 ——
     @property
@@ -64,15 +67,22 @@ class InferenceClient:
     def attach_breaker(self, breaker) -> None:
         self._breaker = breaker
 
+    def set_material_context(self, ctx: str | None) -> None:
+        """注入学习材料相关段落，stream() 拼 prompt 时用，不污染 question 存库。"""
+        self._material_context = ctx
+
     async def abort(self) -> None:
         self._aborted = True
         await self.backend.abort()
 
     # —— 主入口：产出语义事件 ——
     async def stream(self) -> AsyncIterator[dict]:
-        prompt = build_prompt(self.question, self._chain)
+        prompt = build_prompt(self.question, self._chain, self._material_context)
         det = SentinelDetector()
         answer_started = False
+        # 攒一份正文文本：L1 重试抽取 / L2 兜底都要拿正文调 extract_only，
+        # 不能传空串（网关 400，模型也无从抽取）
+        answer_buf: list[str] = []
 
         try:
             async for tok in self._stream_with_timeout(prompt):
@@ -81,6 +91,7 @@ class InferenceClient:
                 delta, saw_sentinel, block = det.feed(tok)
                 if delta:
                     answer_started = True
+                    answer_buf.append(delta)
                     yield {"kind": "delta", "text": delta}
                 if saw_sentinel:
                     yield {"kind": "sentinel"}
@@ -93,21 +104,25 @@ class InferenceClient:
             tail, _, block = det.flush()
             if tail:
                 answer_started = True
+                answer_buf.append(tail)
                 yield {"kind": "delta", "text": tail}
             if block is not None:
                 yield {"kind": "json_done", "block": block}
                 return
             # 无 sentinel 或 JSON 未完整 -> 判定降级
-            async for ev in self._degrade(prompt, answer_started, det):
+            async for ev in self._degrade(prompt, answer_started, det,
+                                          "".join(answer_buf)):
                 yield ev
         except asyncio.TimeoutError:
             # 整体超时：正文已流出 -> 只降级不重试
-            async for ev in self._degrade(prompt, answer_started, det):
+            async for ev in self._degrade(prompt, answer_started, det,
+                                          "".join(answer_buf)):
                 yield ev
         except Exception as e:  # noqa: BLE001
             log.exception("InferenceClient stream error qa_id=%s", self.qa_id)
             if answer_started:
-                async for ev in self._degrade(prompt, True, det):
+                async for ev in self._degrade(prompt, True, det,
+                                              "".join(answer_buf)):
                     yield ev
             else:
                 yield {"kind": "error", "message": str(e)}
@@ -120,8 +135,9 @@ class InferenceClient:
                 first = False
             yield tok
 
-    async def _degrade(self, prompt: str, answer_started: bool, det: SentinelDetector) -> AsyncIterator[dict]:
-        """降级判定：L1 -> L2 -> L3。"""
+    async def _degrade(self, prompt: str, answer_started: bool, det: SentinelDetector,
+                       answer_text: str = "") -> AsyncIterator[dict]:
+        """降级判定：L1 -> L2 -> L3。answer_text 供重试抽取用。"""
         # L1：正文已流出但 JSON 缺失/损坏 -> 触发补标注，error(L1)
         if answer_started and det.phase == "answer":
             # 模型根本没吐 sentinel（不支持并存）-> 尝试 L2 拆两次调用
@@ -134,7 +150,7 @@ class InferenceClient:
             return
         if answer_started and det.phase == "json":
             # 有 sentinel 但 JSON 不完整 -> 重试一次抽取
-            block = await self._retry_extract_once()
+            block = await self._retry_extract_once(answer_text)
             if block is not None:
                 yield {"kind": "json_done", "block": block}
                 return
@@ -189,11 +205,15 @@ class InferenceClient:
                 await self._trigger_backfill()
                 yield {"kind": "error", "message": "extract failed (L1 via L2)"}
 
-    async def _retry_extract_once(self) -> Optional[ConceptBlock]:
-        """重试一次结构化抽取（temperature 降 0.2，仅重抽概念块不重新生成正文）。"""
+    async def _retry_extract_once(self, answer_text: str = "") -> Optional[ConceptBlock]:
+        """重试一次结构化抽取（temperature 降 0.2，仅重抽概念块不重新生成正文）。
+
+        answer_text：已流出的正文。此前传空串会让网关 400（空 user content）
+        且模型无从抽取 -- 这是"层有正文但概念抽取失败"的直接根因之一。
+        """
         try:
             block = await asyncio.wait_for(
-                self.backend.extract_only(""), timeout=settings.json_parse_timeout_s
+                self.backend.extract_only(answer_text), timeout=settings.json_parse_timeout_s
             )
             return block
         except Exception as e:  # noqa: BLE001

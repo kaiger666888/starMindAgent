@@ -54,6 +54,12 @@ class InferenceSession:
         self._breaker = breaker
         self._client.attach_breaker(breaker)
 
+    def set_material_context(self, ctx: str | None) -> None:
+        """转发学习材料相关段落给 InferenceClient，stream() 拼 prompt 时用，
+        不污染 question 存库。"""
+        if hasattr(self._client, "set_material_context"):
+            self._client.set_material_context(ctx)
+
     async def abort(self) -> None:
         """用户回上层：发 abort，正文落盘保留。"""
         await self._client.abort()

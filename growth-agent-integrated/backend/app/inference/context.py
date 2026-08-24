@@ -20,6 +20,7 @@ CONTEXT_TOKEN_BUDGET = 2000
 _SYSTEM_BUDGET = 400
 _CHAIN_BUDGET = 1000
 _QUESTION_BUDGET = 400
+_MATERIAL_BUDGET = 600  # 学习材料相关段落，独立槽，不挤占 question
 _RESERVE = 200
 
 SYSTEM_PROMPT = (
@@ -70,15 +71,30 @@ def compress_chain(chain: list[ChainNode]) -> str:
     return summary
 
 
-def build_prompt(question: str, chain: list[ChainNode] | None = None) -> str:
-    """组装受膨胀控制的 prompt，总 token ≤ CONTEXT_TOKEN_BUDGET。"""
+def build_prompt(question: str, chain: list[ChainNode] | None = None,
+                 material_context: str | None = None) -> str:
+    """组装受膨胀控制的 prompt，总 token ≤ CONTEXT_TOKEN_BUDGET。
+
+    material_context：学习材料相关段落（导入文件时按 question 检索出的相关 chunk），
+    单独预算槽（_MATERIAL_BUDGET），不拼进 question，避免污染存库的 question。
+    """
     chain_summary = compress_chain(chain or [])
-    parts = [SYSTEM_PROMPT[:_SYSTEM_BUDGET], chain_summary, question[:_QUESTION_BUDGET]]
+    parts = [
+        SYSTEM_PROMPT[:_SYSTEM_BUDGET],
+        chain_summary,
+    ]
+    if material_context:
+        # 截到材料预算内
+        parts.append(material_context[:_MATERIAL_BUDGET])
+    parts.append(question[:_QUESTION_BUDGET])
     blob = "\n\n".join(p for p in parts if p)
     # 兜底：超预算则按比例截断概念链摘要
     while _approx_tokens(blob) > CONTEXT_TOKEN_BUDGET - _RESERVE and chain_summary:
         chain_summary = chain_summary[: int(len(chain_summary) * 0.7)]
-        parts = [SYSTEM_PROMPT[:_SYSTEM_BUDGET], chain_summary, question[:_QUESTION_BUDGET]]
+        parts = [SYSTEM_PROMPT[:_SYSTEM_BUDGET], chain_summary]
+        if material_context:
+            parts.append(material_context[:_MATERIAL_BUDGET])
+        parts.append(question[:_QUESTION_BUDGET])
         blob = "\n\n".join(p for p in parts if p)
         if len(chain_summary) < 8:
             break

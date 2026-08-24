@@ -212,18 +212,38 @@ async def get_material_context(material_id: str, query: str, max_chars: int = 20
 
     简单实现：按 query 关键词分句匹配，取最相关段落。生产可换 embedding 检索。
     """
+    result = await get_material_context_detail(material_id, query, max_chars)
+    return result["context_text"]
+
+
+async def get_material_context_detail(material_id: str, query: str, max_chars: int = 2000) -> dict:
+    """下钻/问答时，从材料里检索与 query 相关的段落，返回结构化结果。
+
+    返回:
+      {
+        "context_text": str,      # 拼接好的上下文文本（注入 prompt 用，向后兼容）
+        "snippets": list[str],    # 命中的相关段落（前端展示用，已按相关度排序）
+        "preparation": float,    # 准备度 0-1：命中段落数 / 总段落数（前端进度条用）
+        "total_chunks": int,     # 材料总段落数
+        "matched_chunks": int,   # 命中（score>=1）的段落数
+      }
+    无材料/空内容时返回空结果（preparation=0）。
+    """
+    empty = {"context_text": "", "snippets": [], "preparation": 0.0,
+            "total_chunks": 0, "matched_chunks": 0}
     async with session_scope() as s:
         from sqlalchemy import select as _sel
         mat = (await s.execute(_sel(LearningMaterial).where(LearningMaterial.material_id == material_id))).scalar_one_or_none()
         if not mat:
-            return ""
+            return empty
         plain = mat.content_plain or ""
     if not plain:
-        return ""
+        return empty
     # 按句/段切分
     chunks = re.split(r"\n(?=\S)", plain)
     if not chunks:
-        return plain[:max_chars]
+        return {"context_text": plain[:max_chars], "snippets": [plain[:max_chars]],
+                "preparation": 1.0, "total_chunks": 1, "matched_chunks": 1}
     # query 关键词
     qterms = [w for w in re.split(r"[\s，。、；]+", query) if len(w) >= 2]
     scored = []
@@ -238,4 +258,15 @@ async def get_material_context(material_id: str, query: str, max_chars: int = 20
             break
         out.append(ch)
         total += len(ch)
-    return "\n\n".join(out) if out else plain[:max_chars]
+    # 准备度:命中段落数 / 总段落数。query 无有效关键词时退化为 0
+    matched = sum(1 for sc, _, _ in scored if sc >= 1)
+    prep = (matched / len(chunks)) if (qterms and chunks) else 0.0
+    ctx_text = "\n\n".join(out) if out else plain[:max_chars]
+    snippets = out if out else [plain[:max_chars]]
+    return {
+        "context_text": ctx_text,
+        "snippets": snippets,
+        "preparation": round(prep, 3),
+        "total_chunks": len(chunks),
+        "matched_chunks": matched,
+    }

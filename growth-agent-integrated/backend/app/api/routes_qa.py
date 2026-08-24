@@ -87,6 +87,14 @@ async def stream(qa_id: str):
     """SSE 流式回推：answer_delta / status / concepts / done。"""
     meta = await _load_meta(qa_id)
     pipe = _pipeline_for(qa_id, meta["session_id"], meta["question"])
+    # 重建场景(刷新/断线重连):material context 不在 DB,按 material_id 现检索注入
+    if meta.get("material_id"):
+        from app.learning import service as learning_service
+        ctx_detail = await learning_service.get_material_context_detail(
+            str(meta["material_id"]), meta["question"]
+        )
+        if ctx_detail.get("context_text"):
+            pipe.set_material_context(ctx_detail["context_text"])
 
     async def event_gen():
         try:
@@ -109,9 +117,14 @@ async def drilldown(qa_id: str, req: DriftDownRequest):
     """
     from app.concept import concept_service
     parent = await _load_meta(qa_id)
-    # 查概念历史语境
-    history = await concept_service.get_concept_history(req.concept_id)
+    # 查概念历史语境（前端"标为概念下钻"用 local_* 临时 id，非 UUID，
+    # 直接进 UUID 列查询会让 asyncpg 在编码阶段抛 DataError -> 500。
+    # 非 UUID 视为无历史新概念，跳过查询）
     question = req.question
+    if _is_uuid(req.concept_id):
+        history = await concept_service.get_concept_history(req.concept_id)
+    else:
+        history = None
     if history and history.get("explore_count", 0) >= 2:
         contexts = history.get("contexts", [])
         prior_qs = [c["question"] for c in contexts[:3] if c.get("question")]
@@ -121,18 +134,29 @@ async def drilldown(qa_id: str, req: DriftDownRequest):
                 f"这里请补充它在当前语境下的不同侧面，避免与前述内容重复。）"
             )
             question = f"{hint} {question}"
-    # 学习材料上下文注入：查 parent QAStep 的 material_id
+    # 学习材料上下文：查 parent QAStep 的 material_id（子层继承根层 material_id）
+    # 只把检索到的段落塞进 QAStepOut.context 供前端展示 + 注入推理 prompt,
+    # 不再拼进 question 存库(否则子层标题被污染成几百字拼接串)
     from app.db import session_scope
     from sqlalchemy import select, text as sql_text
     from app.models.tables import QAStep as _QS
     async with session_scope() as s:
         mid = (await s.execute(select(_QS.material_id).where(_QS.qa_id == qa_id))).scalar_one_or_none()
+    drill_context = None
     if mid:
         from app.learning import service as learning_service
-        ctx = await learning_service.get_material_context(str(mid), question)
-        if ctx:
-            question = f"【参考学习材料相关段落】\n{ctx}\n\n【用户问题】\n{question}"
-    pipe = _pipeline_for(qa_id, parent["session_id"], parent["question"])
+        ctx_detail = await learning_service.get_material_context_detail(str(mid), question)
+        if ctx_detail.get("context_text"):
+            drill_context = {
+                "snippets": ctx_detail.get("snippets", []),
+                "preparation": ctx_detail.get("preparation", 0.0),
+                "matched_chunks": ctx_detail.get("matched_chunks", 0),
+                "total_chunks": ctx_detail.get("total_chunks", 0),
+                "context_text": ctx_detail["context_text"],  # 注入推理 prompt 用
+            }
+    # _pipeline_for 读 DB 的 question,而 DB 里子层还没建。传父 question 作底,
+    # 真正的子层 question 在 fork_child 里用 question 变量(干净版)落盘。
+    pipe = _pipeline_for(qa_id, parent["session_id"], question)
     try:
         new_pipe = await pipe.drill_down(
             parent_qa_id=qa_id, concept_id=req.concept_id, question=question
@@ -140,10 +164,15 @@ async def drilldown(qa_id: str, req: DriftDownRequest):
     except DepthLimitReached as e:
         # 膨胀降级：超 6 层 -> 标注已有概念，不新建推理
         raise HTTPException(status_code=422, detail=str(e))
+    # material context 不在 drilldown 注入（pipeline 在 stream 路由会被重建，
+    # 这里的 set 对 stream 无效）。子层 material_id 在 fork_child 已继承，
+    # stream 路由按 material_id 现检索注入。这里只在 QAStepOut.context 回前端展示。
+    # 返回给前端的 question 是干净版(req.question 或概念名),不含材料 context
     return QAStepOut(
         qa_id=new_pipe.qa_id, session_id=new_pipe.session_id,
-        parent_qa_id=qa_id, question=new_pipe.question, answer=None,
+        parent_qa_id=qa_id, question=question, answer=None,
         status=QAStatus.GENERATING.value, version=1, depth=0,
+        context=drill_context,
     )
 
 
@@ -164,6 +193,19 @@ async def rollback(qa_id: str, req: RollbackRequest):
 
 
 # —— 工具 ——
+def _is_uuid(v) -> bool:
+    """concept_id 合法性：UUID 才能进 UUID 列查询（前端"标为概念下钻"的
+    local_* 临时 id 会让 asyncpg 在编码阶段抛 DataError -> 500）。"""
+    if not v or not isinstance(v, str) or len(v) != 36:
+        return False
+    try:
+        import uuid as _uuid
+        _uuid.UUID(v)
+        return True
+    except (ValueError, AttributeError):
+        return False
+
+
 async def _load_meta(qa_id: str) -> dict:
     from sqlalchemy import select
     from app.db import session_scope
@@ -174,4 +216,5 @@ async def _load_meta(qa_id: str) -> dict:
         ).scalar_one_or_none()
         if row is None:
             raise HTTPException(status_code=404, detail=f"qa_step {qa_id} not found")
-        return {"session_id": row.session_id, "question": row.question, "status": row.status}
+        return {"session_id": row.session_id, "question": row.question,
+                "status": row.status, "material_id": row.material_id}

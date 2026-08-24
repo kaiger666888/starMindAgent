@@ -21,7 +21,9 @@ class Settings:
     concept_sentinel: str = os.getenv("CONCEPT_SENTINEL", "≡≡CONCEPT_BLOCK≡≡")
     inference_timeout_s: float = float(os.getenv("INFERENCE_TIMEOUT_S", "60"))
     first_token_timeout_s: float = float(os.getenv("FIRST_TOKEN_TIMEOUT_S", "5"))
-    json_parse_timeout_s: float = float(os.getenv("JSON_PARSE_TIMEOUT_S", "15"))
+    # 网关 glm-5.3 强制思考模式：非流式 complete_text（概念抽取兜底/层摘要）
+    # 首个可见 token 前有长思考期，15s 会 ReadTimeout -> 层有正文但 0 概念
+    json_parse_timeout_s: float = float(os.getenv("JSON_PARSE_TIMEOUT_S", "60"))
 
     # —— 膨胀控制（技术架构文档 第十一节风险表 / 开发要求）——
     max_explore_depth: int = int(os.getenv("MAX_EXPLORE_DEPTH", "6"))
