@@ -214,15 +214,30 @@ class ConceptService:
             # JSONB @> 查询（cast jsonb 避免类型不匹配）
             import json as _json_mod
             from sqlalchemy import text
-            rows = (
-                await s.execute(
-                    text(
-                        "SELECT qa_id, question, session_id, created_at FROM qa_step "
-                        "WHERE extracted_concept_ids @> CAST(:cid AS jsonb) "
-                        "ORDER BY created_at DESC LIMIT :lim"
-                    ).bindparams(cid=_json_mod.dumps([str(concept_id)]), lim=limit)
-                )
-            ).all()
+            from app.db import is_sqlite
+            if is_sqlite():
+                # sqlite 无 @>：python 端过滤
+                rows_all = (
+                    await s.execute(
+                        text(
+                            "SELECT qa_id, question, session_id, created_at, extracted_concept_ids FROM qa_step "
+                            "ORDER BY created_at DESC"
+                        )
+                    )
+                ).all()
+                import json as _j2
+                rows = [r for r in rows_all
+                        if str(concept_id) in (_j2.loads(r[4]) if isinstance(r[4], str) else (r[4] or []))][:limit]
+            else:
+                rows = (
+                    await s.execute(
+                        text(
+                            "SELECT qa_id, question, session_id, created_at FROM qa_step "
+                            "WHERE extracted_concept_ids @> CAST(:cid AS jsonb) "
+                            "ORDER BY created_at DESC LIMIT :lim"
+                        ).bindparams(cid=_json_mod.dumps([str(concept_id)]), lim=limit)
+                    )
+                ).all()
             return {
                 "concept_id": str(node.concept_id),
                 "canonical_name": node.canonical_name,

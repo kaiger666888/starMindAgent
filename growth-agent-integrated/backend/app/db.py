@@ -15,6 +15,13 @@ from app.config import settings
 _engine = None
 _SessionLocal = None
 
+_IS_SQLITE = settings.database_url.startswith("sqlite")
+
+
+def is_sqlite() -> bool:
+    """sqlite 本地开发模式标志（JSONB/UUID PG 方言需绕行）。"""
+    return _IS_SQLITE
+
 
 def _ensure():
     """首次访问时建 engine + sessionmaker（懒加载）。"""
@@ -22,6 +29,15 @@ def _ensure():
     if _engine is None:
         _engine = create_async_engine(settings.database_url, pool_pre_ping=True, future=True)
         _SessionLocal = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
+        if _IS_SQLITE:
+            # sqlite 外键约束默认关闭（归一化/undo 依赖 FK 语义）
+            from sqlalchemy import event
+
+            @event.listens_for(_engine.sync_engine, "connect")
+            def _fk_on(dbapi_conn, _record):
+                cur = dbapi_conn.cursor()
+                cur.execute("PRAGMA foreign_keys=ON")
+                cur.close()
     return _SessionLocal
 
 

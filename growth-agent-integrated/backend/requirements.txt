@@ -9,3 +9,5 @@ pytest>=8.0
 pytest-asyncio>=0.23
 # 本地 sqlite 替代（可选，免装 PG）
 aiosqlite>=0.19
+
+jieba>=0.42

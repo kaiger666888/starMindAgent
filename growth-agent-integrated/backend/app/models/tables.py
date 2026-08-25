@@ -12,10 +12,14 @@ import uuid
 from datetime import datetime
 from sqlalchemy import (
     String, Text, Integer, Float, DateTime, ForeignKey, CheckConstraint, Index, func,
-    BigInteger, Boolean,
+    BigInteger, Boolean, JSON,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+# sqlite 兼容：JSONB/UUID 是 PG 方言类型，sqlite 编译不了 create_all
+_JSONB = JSONB().with_variant(JSON(), "sqlite")
+_UUID = UUID(as_uuid=False).with_variant(String(36), "sqlite")
 
 
 class Base(DeclarativeBase):
@@ -28,9 +32,9 @@ def _uuid() -> str:
 
 class ConceptNode(Base):
     __tablename__ = "concept_node"
-    concept_id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    concept_id: Mapped[str] = mapped_column(_UUID, primary_key=True, default=_uuid)
     canonical_name: Mapped[str] = mapped_column(Text, nullable=False)
-    aliases: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    aliases: Mapped[list] = mapped_column(_JSONB, nullable=False, default=list)
     domain_tag: Mapped[str | None] = mapped_column(Text)
     source: Mapped[str] = mapped_column(Text, nullable=False, default="llm_extracted")
     explore_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -49,8 +53,8 @@ class ConceptNode(Base):
 
 class ConceptEdge(Base):
     __tablename__ = "concept_edge"
-    edge_id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
-    session_id: Mapped[str] = mapped_column(UUID(as_uuid=False), nullable=False)
+    edge_id: Mapped[str] = mapped_column(_UUID, primary_key=True, default=_uuid)
+    session_id: Mapped[str] = mapped_column(_UUID, nullable=False)
     source_id: Mapped[str] = mapped_column(ForeignKey("concept_node.concept_id", ondelete="CASCADE"))
     target_id: Mapped[str] = mapped_column(ForeignKey("concept_node.concept_id", ondelete="CASCADE"))
     relation_type: Mapped[str] = mapped_column(Text, nullable=False, default="related")
@@ -67,7 +71,7 @@ class ConceptEdge(Base):
 
 class QASession(Base):
     __tablename__ = "qa_session"
-    session_id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    session_id: Mapped[str] = mapped_column(_UUID, primary_key=True, default=_uuid)
     user_id: Mapped[str | None] = mapped_column(Text)
     domain_tag: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -75,21 +79,21 @@ class QASession(Base):
 
 class QAStep(Base):
     __tablename__ = "qa_step"
-    qa_id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    qa_id: Mapped[str] = mapped_column(_UUID, primary_key=True, default=_uuid)
     session_id: Mapped[str] = mapped_column(ForeignKey("qa_session.session_id", ondelete="CASCADE"))
     parent_qa_id: Mapped[str | None] = mapped_column(ForeignKey("qa_step.qa_id", ondelete="CASCADE"))
     question: Mapped[str] = mapped_column(Text, nullable=False)
     answer: Mapped[str | None] = mapped_column(Text)
     answer_offset: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    extracted_concept_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    extracted_concept_ids: Mapped[list] = mapped_column(_JSONB, nullable=False, default=list)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="generating")
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)  # 乐观锁
     # 埋点字段
     model: Mapped[str | None] = mapped_column(Text)
     prompt_hash: Mapped[str | None] = mapped_column(Text)
     raw_output: Mapped[str | None] = mapped_column(Text)
-    parsed_concepts: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
-    aliases: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    parsed_concepts: Mapped[list] = mapped_column(_JSONB, nullable=False, default=list)
+    aliases: Mapped[list] = mapped_column(_JSONB, nullable=False, default=list)
     confidence: Mapped[float | None] = mapped_column(Float)
     depth: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     # 004 增强：层摘要 / 放弃标记 / 上次看的概念
@@ -128,10 +132,10 @@ class AuditLog(Base):
     action: Mapped[str] = mapped_column(Text, nullable=False)  # merge / keep / undo
     llm_verdict: Mapped[str | None] = mapped_column(Text)
     # merge/undo 动作字段
-    merge_id: Mapped[str] = mapped_column(UUID(as_uuid=False), default=_uuid)
+    merge_id: Mapped[str] = mapped_column(_UUID, default=_uuid)
     survivor_id: Mapped[str | None] = mapped_column(ForeignKey("concept_node.concept_id", ondelete="CASCADE"))
     absorbed_id: Mapped[str | None] = mapped_column(ForeignKey("concept_node.concept_id", ondelete="CASCADE"))
-    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    payload: Mapped[dict] = mapped_column(_JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (
@@ -145,7 +149,7 @@ class AuditLog(Base):
 class BackfillTask(Base):
     """异步补标注任务，持久化由 worker 池消费，不进内存队列。"""
     __tablename__ = "backfill_task"
-    task_id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    task_id: Mapped[str] = mapped_column(_UUID, primary_key=True, default=_uuid)
     qa_id: Mapped[str] = mapped_column(ForeignKey("qa_step.qa_id", ondelete="CASCADE"))
     status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")
     retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -180,7 +184,7 @@ class UserProfile(Base):
     __tablename__ = "user_profile"
     user_id: Mapped[str] = mapped_column(Text, ForeignKey("app_user.user_id", ondelete="CASCADE"), primary_key=True)
     # LLM 总结的画像：{mastered:[], weak:[], interests:[], recommendation:str, summary:str}
-    profile: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    profile: Mapped[dict] = mapped_column(_JSONB, nullable=False, default=dict)
     qa_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     concept_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_summary_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -193,7 +197,7 @@ class UserProfile(Base):
 # ---------------------------------------------------------------------------
 class LearningMaterial(Base):
     __tablename__ = "learning_material"
-    material_id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    material_id: Mapped[str] = mapped_column(_UUID, primary_key=True, default=_uuid)
     user_id: Mapped[str] = mapped_column(Text, ForeignKey("app_user.user_id", ondelete="CASCADE"), nullable=False)
     title: Mapped[str] = mapped_column(Text, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)

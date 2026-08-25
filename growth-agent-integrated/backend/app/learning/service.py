@@ -95,56 +95,30 @@ async def import_markdown(user_id: str, title: str, content: str) -> dict:
 
 
 async def _extract_concepts_from_material(qa_id: str, material_id: str, session_id: str, md_content: str) -> list[dict]:
-    """用 LLM 从材料全文抽取概念，归一化，关联到 L0 QAStep。"""
+    """三段式概念抽取：候选生成(jieba) -> LLM 精判 -> 降级。
+
+    候选层解决全文覆盖与截断（text[:2000] 旧方案的问题），
+    LLM 精判解决"低频但关键"与主题词过滤（纯统计做不到）。
+    """
     if not md_content.strip():
         return []
-    text = md_content  # 兼容内部用 text 变量名
-    from app.inference.backend import default_backend
-    backend = default_backend()
-    if not hasattr(backend, "complete_text"):
-        return []
-    system = (
-        "从下面这段学习材料中抽取 5-12 个关键概念。用 JSON 数组返回，"
-        "每项 {name, aliases:[], confidence:0.0-1.0}。"
-        "name 用概念规范名(2-6字)，aliases 含中英文/缩写别名。只输出 JSON。"
-    )
-    user = f"学习材料标题/摘要：\n{text[:2000]}"
-    import json as _json, re as _re
+
+    # -- 第 1 段：候选生成（分块 + jieba TF-IDF/TextRank 双路 + 标题词）--
+    from app.learning.keyword_candidates import generate_candidates, fallback_top
+    candidates = generate_candidates(md_content)
+
+    # -- 第 2 段：LLM 精判（输入=大纲+候选带证据，非全文盲送）--
     items = None
-    # LLM 抽取（带重试）
-    for attempt in range(2):
-        try:
-            raw = await backend.complete_text(system, user, timeout=30.0)
-            cleaned = _re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=_re.IGNORECASE)
-            cleaned = _re.sub(r"\s*```\s*$", "", cleaned).strip()
-            m = _re.search(r"\[[\s\S]*\]", cleaned)
-            if m:
-                items = _json.loads(m.group(0))
-                break
-        except Exception as e:
-            log.warning("material concept extract attempt %d failed: %s", attempt + 1, e)
-            if attempt == 0:
-                import asyncio
-                await asyncio.sleep(2)  # 429 退避
+    if candidates:
+        items = await _llm_refine_concepts(md_content, candidates)
 
-    # LLM 失败时本地规则降级抽取（基于标题 + 高频词）
+    # -- 第 3 段：LLM 失败降级为候选层综合分 top8 --
     if not items:
-        log.info("LLM concept extract failed, fallback to local rule-based")
-        items = _local_extract_concepts(text)
-        # content_plain 已去 md 标题标记，降级在纯文本上跑可能抽不到标题
-        # 用原始 content（含 md 标记）再跑一次
-        if not items and text:
-            # content_plain 短文本降级：取 2-6 字高频中文词（阈值2次）
-            import re as _re2
-            word_freq = {}
-            for m in _re2.finditer(r"[\u4e00-\u9fa5]{2,6}", text):
-                w = m.group()
-                word_freq[w] = word_freq.get(w, 0) + 1
-            for w, freq in sorted(word_freq.items(), key=lambda x: -x[1])[:8]:
-                if freq >= 2 and 2 <= len(w) <= 8:
-                    items.append({"name": w, "aliases": [], "confidence": min(0.9, 0.5 + freq * 0.1)})
+        log.info("LLM concept refine failed, fallback to candidate top-N")
+        items = fallback_top(candidates, n=8)
 
-    log.warning("material extract: items=%d, first=%s", len(items), items[0] if items else None)
+    log.info("material extract: candidates=%d, items=%d, first=%s",
+             len(candidates), len(items), items[0] if items else None)
 
     if not items:
         return []
@@ -168,43 +142,120 @@ async def _extract_concepts_from_material(qa_id: str, material_id: str, session_
                 log.warning("normalize %s failed: %s", item.get("name"), e)
         cids = [c["concept_id"] for c in concepts_out if c.get("concept_id")]
         if cids:
+            import json as _json
             from sqlalchemy import text as sql_text
             ids_json = _json.dumps(cids)
-            await s.execute(sql_text(
-                "UPDATE qa_step SET extracted_concept_ids = CAST(:ids AS jsonb) "
-                "WHERE qa_id = CAST(:qid AS uuid)"
-            ), {"ids": ids_json, "qid": qa_id})
+            from app.db import is_sqlite
+            if is_sqlite():
+                await s.execute(sql_text(
+                    "UPDATE qa_step SET extracted_concept_ids = CAST(:ids AS json) "
+                    "WHERE qa_id = :qid"
+                ), {"ids": ids_json, "qid": qa_id})
+            else:
+                await s.execute(sql_text(
+                    "UPDATE qa_step SET extracted_concept_ids = CAST(:ids AS jsonb) "
+                    "WHERE qa_id = CAST(:qid AS uuid)"
+                ), {"ids": ids_json, "qid": qa_id})
     return concepts_out
 
 
-def _local_extract_concepts(text: str) -> list[dict]:
-    """LLM 不可用时本地规则抽取：取 markdown 标题词 + 高频名词短语。
+def _build_outline(md: str, max_headings: int = 30) -> str:
+    """文档大纲（H1-H4 全标题），给 LLM 结构感而非全文。"""
+    heads = [m.group(0).strip() for m in re.finditer(r"^#{1,4}\s+.+$", md, flags=re.MULTILINE)]
+    return "\n".join(heads[:max_headings])
 
-    简单但有效：md 的 ## 标题通常是核心概念。
+
+async def _llm_refine_concepts(md_content: str, candidates) -> list[dict] | None:
+    """流水线第 2 段：LLM 从候选中精判核心概念。
+
+    输入 = 文档大纲 + 候选列表（带出处/频次证据），全文压到骨架。
+    LLM 职责：挑核心、排主题词、补候选外概念、判重要性（三档）。
     """
-    import re
+    from app.inference.backend import default_backend
+    backend = default_backend()
+    if not hasattr(backend, "complete_text"):
+        return None
+
+    outline = _build_outline(md_content)
+    # 候选带证据：名字 | 分数 | 频次 | 出现章节（截断防 prompt 膨胀）
+    cand_lines = []
+    for c in candidates[:50]:
+        cand_lines.append(f"- {c.name}｜分{c.score:.2f}｜频{c.freq}｜{c.section_str}")
+    cand_text = "\n".join(cand_lines)
+
+    system = (
+        "你是知识图谱构建专家。下面给你一篇学习材料的文档大纲和候选概念列表"
+        "（候选由统计算法从全文抽取，带分数/频次/出处，分数已对专业术语加权）。"
+        "请从中精选 5-15 个【值得学习者下钻探索的核心概念】。\n\n"
+        "筛选规则：\n"
+        "1. 专业术语优先：学术/技术专有名词 > 泛化普通词。"
+        "具体术语如\"一致性哈希\"\"CRDT\"\"Raft\"\"Exactly-Once 语义\"直接入选；"
+        "泛词如\"一致性\"\"语义\"\"服务\"\"消息\"默认排除（除非有对应具体术语）。"
+        "结构词（\"背景\"\"结论\"\"方法\"）与领域背景词排除。\n"
+        "2. 低频但出现在关键章节的概念应保留。\n"
+        "3. 英文术语/缩写与中文规范名合并为一条（aliases 互通），"
+        "英文碎片（\"once\"\"rebalance\"）还原成完整术语（\"Exactly-Once 语义\"\"消费者组 Rebalance\"）。\n"
+        "4. 候选遗漏的核心概念可补充新增（confidence 给 0.5-0.7）。\n\n"
+        "输出 JSON 数组，每项（精简，不要定义）：\n"
+        '{"name": "概念规范名", "aliases": ["别名"], "confidence": 0.9}\n'
+        "只输出 JSON。核心概念 0.9-1.0，次要 0.7-0.8。"
+    )
+    user = f"文档大纲：\n{outline}\n\n候选概念（按统计分排序）：\n{cand_text}"
+
+    import json as _json, re as _re
+    for attempt in range(3):
+        try:
+            # 网关实测：候选精判规模（~1.5K 输入 + JSON 输出）thinking disabled 也要 ~80s，
+            # 90s 贴边会连败两次，放宽到 150s；
+            # 长 prompt 会触发 thinking leak（思考吃光 8000 预算、正文 0 字），
+            # max_tokens 提到 16000 保正文
+            raw = await backend.complete_text(system, user, timeout=240.0, max_tokens=16000)
+            if not raw.strip():
+                # 网关偶发违反 thinking=disabled：思考吃光 max_tokens、正文 0 字
+                # （stop_reason=max_tokens + 仅空 thinking block）。重试通常恢复
+                log.warning("LLM refine got empty body (gateway thinking leak), attempt %d", attempt + 1)
+                continue
+            items = _parse_items_lenient(raw)
+            if items:
+                return items
+        except Exception as e:
+            log.warning("LLM concept refine attempt %d failed: %s", attempt + 1, e)
+            if attempt < 2:
+                import asyncio
+                await asyncio.sleep(2)  # 429 退避
+    return None
+
+
+def _parse_items_lenient(raw: str) -> list[dict] | None:
+    """容错解析 LLM 输出的 JSON 数组：整体解析失败时逐项提取，坏项丢弃。
+
+    glm 输出的 aliases 偶含未转义引号 -> 整体 json.loads 抛错；
+    逐项抢救可保住 90% 概念而不是全量降级。
+    """
+    import json, re
+    if not raw:
+        return None
+    cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*```\s*$", "", cleaned).strip()
+    m = re.search(r"\[[\s\S]*\]", cleaned)
+    if not m:
+        return None
+    body = m.group(0)
+    try:
+        items = json.loads(body)
+        return [it for it in items if isinstance(it, dict) and it.get("name")] or None
+    except json.JSONDecodeError:
+        pass
+    # 逐项提取：{...} 对象正则，单个解析失败跳过
     items = []
-    seen = set()
-    # 1. md 标题作概念（最可靠）
-    for m in re.finditer(r"^#{1,3}\s+(.+)$", text, re.MULTILINE):
-        title = m.group(1).strip()
-        # 去标题里的标点/连词
-        for part in re.split(r"[·、，,/（）()【】\[\]：:]", title):
-            part = part.strip()
-            if 2 <= len(part) <= 12 and part not in seen:
-                seen.add(part)
-                items.append({"name": part, "aliases": [], "confidence": 0.8})
-    # 2. 高频中文词（2-4字，出现≥3次）
-    word_freq = {}
-    for m in re.finditer(r"[\u4e00-\u9fa5]{2,4}", text):
-        w = m.group()
-        if len(w) >= 2:
-            word_freq[w] = word_freq.get(w, 0) + 1
-    for w, freq in sorted(word_freq.items(), key=lambda x: -x[1])[:10]:
-        if freq >= 3 and w not in seen and 2 <= len(w) <= 8:
-            seen.add(w)
-            items.append({"name": w, "aliases": [], "confidence": min(0.9, 0.5 + freq * 0.05)})
-    return items[:12]
+    for om in re.finditer(r"\{[^{}]*\}", body):
+        try:
+            it = json.loads(om.group(0))
+            if isinstance(it, dict) and it.get("name"):
+                items.append(it)
+        except json.JSONDecodeError:
+            continue
+    return items or None
 
 
 async def get_material_context(material_id: str, query: str, max_chars: int = 2000) -> str:

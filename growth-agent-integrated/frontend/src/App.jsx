@@ -3,12 +3,16 @@ import TreeView from './components/TreeView'
 import ConceptGraph from './components/ConceptGraph'
 import ReadingPane from './components/ReadingPane'
 import MemoryView from './components/MemoryView'
+import SettingsPanel from './components/SettingsPanel'
 import { useStore } from './store/qaStore'
+import { loadPrefs, zoneStyle } from './bindding'
 
 export default function App() {
   const tree = useStore((s) => s.tree)
   const inflight = useStore((s) => s.inflight)
   const [view, setView] = useState('explore') // explore | memory
+  // 装帧：分区字体/字号/纸色（容器级 CSS 变量遮蔽，组件零改动）
+  const [bindding, setBindding] = useState(() => loadPrefs())
 
   // 概念图状态三导航：点灰色未探索概念 → 切到探索视图并预填问题
   useEffect(() => {
@@ -54,21 +58,24 @@ export default function App() {
               档案
             </button>
           </nav>
+          <SettingsPanel prefs={bindding} onChange={setBindding} />
         </div>
       </header>
       <div style={styles.body}>
         {view === 'explore' ? (
           <>
-            <TreeView />
-            <main style={styles.main}>
+            <div data-zone="tree" style={{ ...styles.treeZone, ...zoneStyle('tree', bindding.tree) }}>
+              <TreeView />
+            </div>
+            <main data-zone="reading" style={{ ...styles.main, ...zoneStyle('reading', bindding.reading) }}>
               <ReadingPane />
             </main>
-            <aside style={styles.graphAside}>
+            <aside data-zone="graph" style={{ ...styles.graphAside, ...zoneStyle('graph', bindding.graph) }}>
               <ConceptGraph />
             </aside>
           </>
         ) : (
-          <main style={styles.memoryMain}>
+          <main data-zone="memory" style={{ ...styles.memoryMain, ...zoneStyle('memory', bindding.memory) }}>
             <MemoryView />
           </main>
         )}
@@ -111,6 +118,7 @@ const styles = {
     animation: 'pulse 1.4s ease-in-out infinite',
   },
   body: { flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 },
+  treeZone: { display: 'flex', flexDirection: 'column', flexShrink: 0 },
   main: { flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 },
   graphAside: { width: 380, borderLeft: '1px solid var(--rule)', display: 'flex', flexDirection: 'column', flexShrink: 0 },
   memoryMain: { flex: 1, overflow: 'auto', background: 'var(--paper)' },

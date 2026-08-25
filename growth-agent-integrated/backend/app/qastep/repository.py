@@ -20,6 +20,13 @@ from app.qastep.state_machine import QAStatus, OptimisticLockConflict, IllegalTr
 log = logging.getLogger(__name__)
 
 
+def _uuid_cast(param: str) -> str:
+    """PG: CAST(:p AS uuid)；sqlite: :p（CAST 会按数字 affine 把 uuid 转 0）。"""
+    from app.db import is_sqlite
+    return param if is_sqlite() else f"CAST({param} AS uuid)"
+
+
+
 def _is_uuid(v) -> bool:
     """concept_id 合法性：UUID 才能进 UUID 列（local_* 临时 id 会炸 asyncpg 编码）。"""
     if not v or not isinstance(v, str) or len(v) != 36:
@@ -85,16 +92,16 @@ class QAStepRepository:
             await s.execute(text(
                 "UPDATE qa_step "
                 "SET answer = COALESCE(answer,'') || CAST(:d AS TEXT), "
-                "    answer_offset = char_length(COALESCE(answer,'') || CAST(:d AS TEXT)), "
+                "    answer_offset = length(COALESCE(answer,'') || CAST(:d AS TEXT)), "
                 "    version = version + 1 "
-                "WHERE qa_id = CAST(:id AS uuid)"
+                f"WHERE qa_id = {_uuid_cast(':id')}"
             ).bindparams(d=delta, id=qa_id))
 
     async def update_layer_summary(self, qa_id: str, summary: str) -> None:
         """落盘层摘要（"这层你理解了什么"，作树节点折叠预览）。"""
         async with session_scope() as s:
             await s.execute(text(
-                "UPDATE qa_step SET layer_summary = :s WHERE qa_id = CAST(:id AS uuid)"
+                f"UPDATE qa_step SET layer_summary = :s WHERE qa_id = {_uuid_cast(':id')}"
             ).bindparams(s=summary, id=qa_id))
 
     async def mark_browsed_not_drilled(self, qa_id: str) -> None:
@@ -106,13 +113,13 @@ class QAStepRepository:
             # 子数 = 0 才算放弃
             child_cnt = (
                 await s.execute(text(
-                    "SELECT count(*) FROM qa_step WHERE parent_qa_id = CAST(:id AS uuid)"
+                    f"SELECT count(*) FROM qa_step WHERE parent_qa_id = {_uuid_cast(':id')}"
                 ).bindparams(id=qa_id))
             ).scalar() or 0
             if child_cnt == 0:
                 await s.execute(text(
                     "UPDATE qa_step SET browsed_not_drilled = true "
-                    "WHERE qa_id = CAST(:id AS uuid)"
+                    f"WHERE qa_id = {_uuid_cast(':id')}"
                 ).bindparams(id=qa_id))
 
     async def evaluate_concept_maturity(self, qa_id: str) -> int:
@@ -124,7 +131,7 @@ class QAStepRepository:
             row = (
                 await s.execute(text(
                     "SELECT extracted_concept_ids FROM qa_step "
-                    "WHERE qa_id = CAST(:id AS uuid)"
+                    f"WHERE qa_id = {_uuid_cast(':id')}"
                 ).bindparams(id=qa_id))
             ).first()
             if not row or not row[0]:
@@ -133,7 +140,7 @@ class QAStepRepository:
             # 未下钻（无子）
             child_cnt = (
                 await s.execute(text(
-                    "SELECT count(*) FROM qa_step WHERE parent_qa_id = CAST(:id AS uuid)"
+                    f"SELECT count(*) FROM qa_step WHERE parent_qa_id = {_uuid_cast(':id')}"
                 ).bindparams(id=qa_id))
             ).scalar() or 0
             if child_cnt > 0:
@@ -143,13 +150,13 @@ class QAStepRepository:
                 cnt = (
                     await s.execute(text(
                         "SELECT explore_count FROM concept_node "
-                        "WHERE concept_id = CAST(:id AS uuid)"
+                        f"WHERE concept_id = {_uuid_cast(':id')}"
                     ).bindparams(id=str(cid)))
                 ).scalar() or 0
                 if cnt >= 2:
                     await s.execute(text(
                         "UPDATE concept_node SET understood = true "
-                        "WHERE concept_id = CAST(:id AS uuid)"
+                        f"WHERE concept_id = {_uuid_cast(':id')}"
                     ).bindparams(id=str(cid)))
                     marked += 1
             return marked

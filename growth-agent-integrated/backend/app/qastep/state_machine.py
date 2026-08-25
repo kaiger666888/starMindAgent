@@ -120,6 +120,10 @@ class QAStepPipeline:
         """
         # —— generating：流式正文 ——
         # QAStep 在 repo.create() 时已置 GENERATING，这里只发语义通知，不重复转换
+        # 重跑幂等：刷新/断线重连会重新订阅 stream 并重跑推理，append_answer 是
+        # 纯追加（|| 拼接），不清空旧 answer 会让正文越滚越长（实测一层累积到
+        # 7900+ 字），L1 兜底把整段正文塞回 prompt，网关内存被越推越高（OOM 放大器）。
+        await self.repo.reset_answer(self.qa_id)
         yield {"type": "status", "status": QAStatus.GENERATING.value}
 
         answer_buf: list[str] = []

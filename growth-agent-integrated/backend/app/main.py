@@ -15,6 +15,8 @@ from app.api import qa_router, concept_router, harness_router, memory_router, le
 from app.inference import backfill_queue, backfill_processor
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+# uvicorn 的 LOGGING_CONFIG 会先接管 root（level=WARNING），basicConfig 不生效 -> 显式提级
+logging.getLogger("app").setLevel(logging.INFO)
 log = logging.getLogger("growth-agent")
 
 

@@ -19,6 +19,10 @@ from app.schemas import ConceptBlock, ConceptItem
 log = logging.getLogger(__name__)
 
 
+class _GatewayOverload(Exception):
+    """网关过载/OOM（5xx、Error code 1210、Out of Memory）：可退避重试。"""
+
+
 @runtime_checkable
 class LLMBackend(Protocol):
     """推理后端契约：流式正文 + 尾部结构化 JSON（sentinel 分割）。"""
@@ -225,13 +229,20 @@ class AnthropicBackend:
 
     def _payload(self, messages, stream: bool, max_tokens: int | None = None) -> dict:
         # Anthropic 格式: system 单独字段, messages 只含 user/assistant
-        # 网关 glm-5.3 强制思考模式且思考 token 计入 max_tokens 预算：
-        # 预算过小（如 2000）会被 thinking 吃光导致正文 0 字（stop=max_tokens）。
-        # 实测长 thinking（~4K token）+ 长正文（1.5K 字）+ sentinel JSON 会撞 8000 顶
-        # （正文流出后截断，sentinel JSON 丢失 -> 概念抽取退兜底），
-        # 故默认放大到 16000，可经 LLM_MAX_TOKENS 覆盖。
+        #
+        # -- 低内存推理策略（实测 2026-08-24）--
+        # 网关 glm-5.3 默认强制 thinking 且不限量：不传 thinking 参数时
+        # thinking 会吃光全部 max_tokens（stop=max_tokens、正文 0 字），
+        # 长思考也是网关推理实例 OOM（"Error code: 1210 - Out of Memory"）
+        # 的主要压力源。实测网关尊重两种显式控制：
+        #   thinking disabled          -> 秒回、正文完整、output_tokens 小
+        #   thinking budget_tokens=N   -> 思考被卡在 N 内
+        # 故默认 disabled（探索问答/抽取不需要深度思考）；LLM_THINKING=enabled
+        # 时带 budget_tokens 护栏（防思考无限膨胀拉高内存）。
+        # max_tokens 默认 8000 即可（disabled thinking 后正文+sentinel JSON
+        # 6K 足够），不再为 thinking 无限加预算。
         if max_tokens is None:
-            max_tokens = int(os.getenv("LLM_MAX_TOKENS", "16000"))
+            max_tokens = int(os.getenv("LLM_MAX_TOKENS", "8000"))
         system = ""
         user_msgs = []
         for m in messages:
@@ -245,6 +256,12 @@ class AnthropicBackend:
             "max_tokens": max_tokens,
             "messages": user_msgs,
         }
+        if self.thinking_enabled:
+            budget = int(os.getenv("LLM_THINKING_BUDGET", "3000"))
+            budget = min(budget, max(1024, max_tokens // 3))
+            payload["thinking"] = {"type": "enabled", "budget_tokens": budget}
+        else:
+            payload["thinking"] = {"type": "disabled"}
         if system.strip():
             payload["system"] = system.strip()
         return payload
@@ -258,6 +275,26 @@ class AnthropicBackend:
             {"role": "user", "content": prompt},
         ]
         payload = self._payload(messages, stream=True)
+        # 网关 OOM/过载（如 "Error code: 1210 - Out of Memory"）退避重试一次：
+        # 瞬时故障重试即可恢复；重试仍失败给友好文案，不让原始错误码裸奔到前端。
+        for attempt in range(2):
+            try:
+                async for tok in self._stream_once(payload):
+                    yield tok
+                return
+            except _GatewayOverload as e:
+                if attempt == 0:
+                    import asyncio
+                    log.warning("gateway overloaded (%s), retrying after 2s "
+                                "model=%s", e, self.model)
+                    await asyncio.sleep(2)
+                else:
+                    raise RuntimeError(
+                        "推理服务当前繁忙（网关过载），请稍后重试"
+                    ) from e
+
+    async def _stream_once(self, payload: dict) -> AsyncIterator[str]:
+        import httpx
         async with httpx.AsyncClient(timeout=settings.inference_timeout_s) as client:
             async with client.stream("POST", self.endpoint,
                 headers=self._headers(), json=payload) as resp:
@@ -265,6 +302,8 @@ class AnthropicBackend:
                     body = (await resp.aread()).decode(errors="replace")[:500]
                     log.error("gateway %s -> %s: %s", self.endpoint,
                               resp.status_code, body)
+                    if resp.status_code >= 500 or "Out of Memory" in body or "1210" in body:
+                        raise _GatewayOverload(f"{resp.status_code}: {body[:200]}")
                     raise RuntimeError(f"gateway {resp.status_code}: {body}")
                 stop_reason = None
                 async for line in resp.aiter_lines():
@@ -302,20 +341,37 @@ class AnthropicBackend:
             raise RuntimeError("extract_only produced unparseable block")
         return block
 
-    async def complete_text(self, system: str, user: str, timeout: float = 60.0) -> str:
-        """非流式：调 /v1/messages，返回 content[0].text（跳过 thinking）。"""
+    async def complete_text(self, system: str, user: str, timeout: float = 60.0,
+                            max_tokens: int | None = None) -> str:
+        """非流式：调 /v1/messages，返回 content[0].text（跳过 thinking）。
+
+        网关 OOM/过载退避重试一次（抽取/摘要类调用短平快，重试代价低）。
+        max_tokens 可覆盖（长 prompt 会触发网关 thinking leak：思考吃光
+        默认 8000 预算、正文 0 字，提到 16000 让正文有机会出来）。
+        """
         import httpx
         payload = self._payload(
             [{"role": "system", "content": system}, {"role": "user", "content": user}],
-            stream=False,
+            stream=False, max_tokens=max_tokens,
         )
-        async with httpx.AsyncClient(timeout=timeout) as c:
-            r = await c.post(self.endpoint, headers=self._headers(), json=payload)
-            if r.status_code != 200:
+        for attempt in range(2):
+            async with httpx.AsyncClient(timeout=timeout) as c:
+                r = await c.post(self.endpoint, headers=self._headers(), json=payload)
+                if r.status_code == 200:
+                    data = r.json()
+                    break
                 log.error("gateway %s -> %s: %s", self.endpoint,
                           r.status_code, r.text[:500])
+                if (r.status_code >= 500 or "Out of Memory" in r.text
+                        or "1210" in r.text):
+                    if attempt == 0:
+                        import asyncio
+                        log.warning("gateway overloaded (%s), retry after 2s "
+                                    "model=%s", r.status_code, self.model)
+                        await asyncio.sleep(2)
+                        continue
+                    raise RuntimeError("推理服务当前繁忙（网关过载），请稍后重试")
                 r.raise_for_status()
-            data = r.json()
         # Anthropic 响应: content 是数组,含 {type: "thinking"|"text", text: "..."}
         content = data.get("content", [])
         for block in content:

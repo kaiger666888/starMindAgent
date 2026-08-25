@@ -43,7 +43,24 @@ async def graph(req: GraphRequest):
 
 @router.post("/explore")
 async def explore(req: ExploreRequest):
+    # 前端"标为概念下钻"用 local_* 临时 id 调本接口（本地选中文本还没入库成概念），
+    # 非 UUID 直接进 UPDATE ... WHERE concept_id=$1::UUID 会炸 asyncpg -> 500。
+    # 视为"尚未沉淀的概念"，跳过计数。
+    if not _is_uuid(req.concept_id):
+        return {"concept_id": req.concept_id, "explore_count": 0,
+                "drill_down_count": 0, "visit_count": 0, "skipped": True}
     return await concept_service.increment_explore(req.concept_id)
+
+
+def _is_uuid(v) -> bool:
+    if not v or not isinstance(v, str) or len(v) != 36:
+        return False
+    try:
+        import uuid as _uuid
+        _uuid.UUID(v)
+        return True
+    except (ValueError, AttributeError):
+        return False
 
 
 @router.get("/global")
@@ -89,8 +106,15 @@ async def correct(req: CorrectAnnotationRequest):
             ids.append(cid)
         elif req.action == "remove" and cid in ids:
             ids.remove(cid)
-        await s.execute(text(
-            "UPDATE qa_step SET extracted_concept_ids = :ids::jsonb "
-            "WHERE qa_id = CAST(:id AS uuid)"
-        ).bindparams(ids=__import__('json').dumps(ids), id=req.qa_id))
+        from app.db import is_sqlite
+        if is_sqlite():
+            await s.execute(text(
+                "UPDATE qa_step SET extracted_concept_ids = CAST(:ids AS json) "
+                "WHERE qa_id = :id"
+            ).bindparams(ids=__import__('json').dumps(ids), id=req.qa_id))
+        else:
+            await s.execute(text(
+                "UPDATE qa_step SET extracted_concept_ids = :ids::jsonb "
+                "WHERE qa_id = CAST(:id AS uuid)"
+            ).bindparams(ids=__import__('json').dumps(ids), id=req.qa_id))
     return {"qa_id": req.qa_id, "concept_id": req.concept_id, "action": req.action, "extracted_concept_ids": ids}

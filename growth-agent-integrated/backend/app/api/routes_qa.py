@@ -15,7 +15,7 @@ from fastapi.responses import StreamingResponse
 
 from app.qastep import repo, QAStatus, DepthLimitReached, IllegalTransition
 from app.qastep.state_machine import QAStepPipeline
-from app.qastep.repository import QAStepRepository
+from app.qastep.repository import QAStepRepository, _uuid_cast
 from app.concept import normalizer
 from app.inference import StubInferenceSession
 from app.schemas import QAStartRequest, QAStepOut, DriftDownRequest, RollbackRequest
@@ -39,8 +39,7 @@ async def start(req: QAStartRequest):
 
     学习材料：若 material_id 给定，从文件检索与 question 相关段落注入 prompt。
     """
-    from app.db import session_scope
-    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from app.db import session_scope, is_sqlite
     from sqlalchemy import update
     from app.models.tables import QASession, AppUser
     from datetime import datetime, timezone
@@ -53,13 +52,24 @@ async def start(req: QAStartRequest):
         if ctx:
             question = f"【参考学习材料相关段落】\n{ctx}\n\n【用户问题】\n{req.question}"
     async with session_scope() as s:
-        stmt = pg_insert(AppUser).values(
-            user_id=user_id, last_active_at=datetime.now(timezone.utc)
-        )
-        stmt = stmt.on_conflict_do_update(
-            index_elements=[AppUser.user_id],
-            set_={"last_active_at": datetime.now(timezone.utc)},
-        )
+        if is_sqlite():
+            from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+            stmt = sqlite_insert(AppUser).values(
+                user_id=user_id, last_active_at=datetime.now(timezone.utc)
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=[AppUser.user_id],
+                set_={"last_active_at": datetime.now(timezone.utc)},
+            )
+        else:
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+            stmt = pg_insert(AppUser).values(
+                user_id=user_id, last_active_at=datetime.now(timezone.utc)
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=[AppUser.user_id],
+                set_={"last_active_at": datetime.now(timezone.utc)},
+            )
         await s.execute(stmt)
         sess = QASession(user_id=user_id, domain_tag=req.domain_tag)
         s.add(sess)
@@ -73,7 +83,7 @@ async def start(req: QAStartRequest):
         from sqlalchemy import text
         async with session_scope() as s:
             await s.execute(text(
-                "UPDATE qa_step SET material_id = CAST(:mid AS uuid) WHERE qa_id = CAST(:id AS uuid)"
+                f"UPDATE qa_step SET material_id = {_uuid_cast(':mid')} WHERE qa_id = {_uuid_cast(':id')}"
             ).bindparams(mid=req.material_id, id=created.qa_id))
     return QAStepOut(
         qa_id=created.qa_id, session_id=session_id,

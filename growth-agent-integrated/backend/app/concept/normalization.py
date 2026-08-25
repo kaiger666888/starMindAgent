@@ -219,7 +219,18 @@ class ConceptNormalizer:
 
     # —— 内部 ——
     async def _alias_exact_match(self, name: str, session_id: str) -> dict | None:
+        import json as _json
+        from app.db import is_sqlite
         async with session_scope() as s:
+            if is_sqlite():
+                # sqlite 无 JSONB @> ：python 端比对（节点量级小，可接受）
+                rows = (await s.execute(select(ConceptNode))).scalars()
+                for row in rows:
+                    if row.canonical_name == name or name in (row.aliases or []):
+                        return {"concept_id": row.concept_id,
+                                "matched_alias": name,
+                                "canonical_name": row.canonical_name}
+                return None
             # canonical_name 精确匹配 或 aliases JSONB 包含
             # 用 first() 而非 scalar_one_or_none()：历史数据可能有重复节点
             # （同名 canonical 或多节点别名含同一 name），取第一个匹配即可归一化
@@ -227,7 +238,9 @@ class ConceptNormalizer:
                 await s.execute(
                     select(ConceptNode).where(
                         (ConceptNode.canonical_name == name)
-                        | ConceptNode.aliases.op('@>')(cast(literal(f'["{name}"]'), JSONB))
+                        # aliases 用 json.dumps 构造（概念名可能含双引号，f-string 拼接
+                        # 会产生非法 JSON -> asyncpg InvalidTextRepresentationError）
+                        | ConceptNode.aliases.op('@>')(cast(literal(_json.dumps([name])), JSONB))
                     ).limit(1)
                 )
             ).scalars().first()
