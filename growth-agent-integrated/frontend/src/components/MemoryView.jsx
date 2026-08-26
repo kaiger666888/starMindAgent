@@ -219,6 +219,7 @@ function SessionItem({ sess, idx, expanded, onToggle }) {
   const [loadingD, setLoadingD] = useState(false)
   const [resuming, setResuming] = useState(false)
   const [resumeErr, setResumeErr] = useState(null)
+  const [exporting, setExporting] = useState(false)
   async function loadDetail() {
     if (detail) return
     setLoadingD(true)
@@ -229,6 +230,21 @@ function SessionItem({ sess, idx, expanded, onToggle }) {
     }
   }
   useEffect(() => { if (expanded) loadDetail() }, [expanded])
+
+  // 结构化导出：md 学习手账（可再导入开新探索，与导入功能闭环）
+  async function onExport() {
+    setExporting(true)
+    try {
+      const blob = await api.exportSession(sess.session_id, 'md')
+      const date = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+      const title = (sess.last_question || '学习手账').slice(0, 20)
+      api.downloadBlob(blob, `${title}-${date}.md`)
+    } catch (e) {
+      console.error('[onExport] 导出失败:', e)
+    } finally {
+      setExporting(false)
+    }
+  }
 
   // 继续探索:把历史会话恢复成探索树,切到探索视图
   async function onResume() {
@@ -270,6 +286,8 @@ function SessionItem({ sess, idx, expanded, onToggle }) {
                 resuming={resuming}
                 resumeErr={resumeErr}
                 onResume={onResume}
+                onExport={onExport}
+                exporting={exporting}
               />
             ) : (
               <div style={s.empty}>无步骤数据</div>
@@ -308,6 +326,9 @@ function SessionItem({ sess, idx, expanded, onToggle }) {
                 <button style={s.resumeBtn} onClick={onResume} disabled={resuming}>
                   {resuming ? '正在恢复…' : '继续探索 →'}
                 </button>
+                <button style={s.exportBtn} onClick={onExport} disabled={exporting}>
+                  {exporting ? '导出中…' : '导出手账'}
+                </button>
                 {resumeErr && <span style={s.resumeErr}>{resumeErr}</span>}
               </div>
             </>
@@ -321,7 +342,7 @@ function SessionItem({ sess, idx, expanded, onToggle }) {
 }
 
 // 导入文件展开详情:元信息条 + content_plain 摘要(不铺全文) + 子层探索索引
-function ImportedDetail({ detail, resuming, resumeErr, onResume }) {
+function ImportedDetail({ detail, resuming, resumeErr, onResume, onExport, exporting }) {
   const steps = detail.steps || []
   const root = steps[0]  // L0 = 导入根层, question=文件名, answer=content_plain
   // 下钻出来的子层:用结构过滤(parent_qa_id 非空)而非 depth。
@@ -381,6 +402,9 @@ function ImportedDetail({ detail, resuming, resumeErr, onResume }) {
       <div style={s.resumeRow}>
         <button style={s.resumeBtn} onClick={onResume} disabled={resuming}>
           {resuming ? '正在恢复…' : '在探索视图中打开 →'}
+        </button>
+        <button style={s.exportBtn} onClick={onExport} disabled={exporting}>
+          {exporting ? '导出中…' : '导出手账'}
         </button>
         {resumeErr && <span style={s.resumeErr}>{resumeErr}</span>}
       </div>
@@ -546,6 +570,14 @@ const s = {
     cursor: 'pointer', transition: 'opacity 0.15s', letterSpacing: '0.02em',
   },
   resumeErr: { fontSize: 11, color: 'var(--danger)', fontFamily: 'var(--mono)' },
+  // 导出手账按钮:同族次级(描边轻、透明底),导出是带走动作不是主流程
+  exportBtn: {
+    padding: '7px 16px', fontSize: 13, fontFamily: 'var(--serif)',
+    color: 'var(--settled)', background: 'transparent',
+    border: '1px dashed var(--settled)', borderRadius: 'var(--r-sm)',
+    cursor: 'pointer', transition: 'opacity 0.15s', letterSpacing: '0.02em',
+    opacity: 0.85,
+  },
 
   // —— 导入文件:卷宗式折叠(陶土棕"卷"字标记 + 标题主标,展开只显摘要) ——
   importedBtn: {

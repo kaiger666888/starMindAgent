@@ -168,6 +168,25 @@ export async function resumeSession(sessionId) {
   }
 }
 
+// -- 结构化导出：一次学习 -> md 手账 / json 备份（附件下载） --
+export async function exportSession(sessionId, format = 'md') {
+  const res = await fetch(`${BASE}/memory/sessions/${sessionId}/export?format=${format}`)
+  if (!res.ok) throw new Error(`export failed: ${res.status}`)
+  return res.blob()
+}
+
+// Blob 触发浏览器下载（文件名取自 Content-Disposition 的 RFC 5987 编码）
+export function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 2000)
+}
+
 export async function getProfile(userId) {
   const res = await fetch(`${BASE}/memory/users/${userId}/profile`)
   if (!res.ok && res.status !== 404) throw new Error(`get profile failed: ${res.status}`)
