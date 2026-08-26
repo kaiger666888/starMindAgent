@@ -24,13 +24,62 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/qa", tags=["qa"])
 
 
-def _pipeline_for(qa_id: str, session_id: str, question: str) -> QAStepPipeline:
+async def _pipeline_for(qa_id: str, session_id: str, question: str) -> QAStepPipeline:
     """构建 QAStepPipeline：推理会话走 harness 生产级 InferenceSession（真实推理不可用时 stub 兜底）。"""
     from app.harness.app import get_harness
     h = get_harness()
     inf = h.session_for(qa_id, session_id, question)
     pipe = QAStepPipeline(qa_id, session_id, question, inf, normalizer, repo)
+    # 概念链注入：沿 parent_qa_id 回溯构建下钻路径（浅->深），填 build_prompt
+    # 概念链槽。此前该槽从未被填充 -> L2+ 回答无路径上下文，模型只能泛讲
+    # 主题（"对最高层内容的概括性解读"的同质化根因）。
+    chain = await _build_chain(qa_id)
+    if chain:
+        pipe.set_chain(chain)
     return pipe
+
+
+async def _build_chain(qa_id: str, max_len: int = 10) -> list:
+    """沿 parent_qa_id 向上回溯，构建从根到父层的概念链（ChainNode 列表，浅->深）。
+
+    ChainNode.concept 从父层 question 提取（下钻问句格式「深入解释「X」」取 X；
+    旧数据/自由问句取前 20 字）。返回列表不含当前层自身。
+    """
+    import re as _re
+    from app.inference.context import ChainNode
+    from app.db import session_scope
+    from sqlalchemy import select as _sel
+    from app.models.tables import QAStep as _QS
+    nodes: list = []
+    cur = qa_id
+    seen: set = set()
+    for _ in range(max_len):
+        if not cur or cur in seen:
+            break
+        seen.add(cur)
+        async with session_scope() as s:
+            row = (
+                await s.execute(_sel(_QS.parent_qa_id, _QS.question, _QS.depth)
+                .where(_QS.qa_id == cur))
+            ).first()
+        if row is None:
+            break
+        parent_qa_id, question, depth = row
+        if parent_qa_id is None:
+            break  # 当前层是根，链到此为止（根层自身不入链）
+        # 提取父层的"被下钻概念"：下钻问句取「X」，否则剥疑问前缀后取前 20 字
+        m = _re.search(r"「(.+?)」", question or "")
+        if m:
+            concept = m.group(1)
+        else:
+            concept = _re.sub(
+                r"^(什么是|请(详细)?(解释|介绍|说明)|如何理解|为什么|详述|解释|介绍)\s*",
+                "", (question or "").strip())[:20]
+        nodes.append(ChainNode(depth=depth, question=question or "",
+                               concept=concept, siblings=[]))
+        cur = parent_qa_id
+    nodes.reverse()  # 浅 -> 深
+    return nodes
 
 
 @router.post("/start", response_model=QAStepOut)
@@ -96,7 +145,7 @@ async def start(req: QAStartRequest):
 async def stream(qa_id: str):
     """SSE 流式回推：answer_delta / status / concepts / done。"""
     meta = await _load_meta(qa_id)
-    pipe = _pipeline_for(qa_id, meta["session_id"], meta["question"])
+    pipe = await _pipeline_for(qa_id, meta["session_id"], meta["question"])
     # 重建场景(刷新/断线重连):material context 不在 DB,按 material_id 现检索注入
     if meta.get("material_id"):
         from app.learning import service as learning_service
@@ -131,6 +180,7 @@ async def drilldown(qa_id: str, req: DriftDownRequest):
     # 直接进 UUID 列查询会让 asyncpg 在编码阶段抛 DataError -> 500。
     # 非 UUID 视为无历史新概念，跳过查询）
     question = req.question
+    diff_hint = None
     if _is_uuid(req.concept_id):
         history = await concept_service.get_concept_history(req.concept_id)
     else:
@@ -139,11 +189,21 @@ async def drilldown(qa_id: str, req: DriftDownRequest):
         contexts = history.get("contexts", [])
         prior_qs = [c["question"] for c in contexts[:3] if c.get("question")]
         if prior_qs:
-            hint = (
+            diff_hint = (
                 f"（你之前在「{'、'.join(prior_qs)}」的语境下了解过【{history.get('canonical_name', '')}】，"
                 f"这里请补充它在当前语境下的不同侧面，避免与前述内容重复。）"
             )
-            question = f"{hint} {question}"
+    # 下钻问题展开式包装（防回答同质化）：前端概念下钻传的就是概念名两三个字
+    # （如"保留集"），光秃秃的概念名当问题，模型最安全的答法是概括上层主题
+    # -> 每层回答趋同。包装成显式的概念展开式问句，明确"从该概念本身讲起"。
+    # 先包装再拼差异 hint（hint 前置会让包装启发式判定失败）。
+    # mode="ask"（针对性提问）跳过包装：用户问句本身已完整，直接作子层问题。
+    if req.mode == "ask":
+        question = (req.question or "").strip()
+    else:
+        question = _expand_drill_question(req.question, parent.get("question"))
+    if diff_hint:
+        question = f"{diff_hint}{question}"
     # 学习材料上下文：查 parent QAStep 的 material_id（子层继承根层 material_id）
     # 只把检索到的段落塞进 QAStepOut.context 供前端展示 + 注入推理 prompt,
     # 不再拼进 question 存库(否则子层标题被污染成几百字拼接串)
@@ -166,7 +226,7 @@ async def drilldown(qa_id: str, req: DriftDownRequest):
             }
     # _pipeline_for 读 DB 的 question,而 DB 里子层还没建。传父 question 作底,
     # 真正的子层 question 在 fork_child 里用 question 变量(干净版)落盘。
-    pipe = _pipeline_for(qa_id, parent["session_id"], question)
+    pipe = await _pipeline_for(qa_id, parent["session_id"], question)
     try:
         new_pipe = await pipe.drill_down(
             parent_qa_id=qa_id, concept_id=req.concept_id, question=question
@@ -203,6 +263,43 @@ async def rollback(qa_id: str, req: RollbackRequest):
 
 
 # —— 工具 ——
+def _expand_drill_question(question: str | None, parent_question: str | None = None) -> str:
+    """把光秃秃的概念名包装成概念展开式下钻问句（防回答同质化）。
+
+    前端概念下钻传的 question 就是概念名本身（2-8 字），直接当 prompt 的
+    "问题"，模型最安全的答法是概括主题 -> 每层回答趋同、沦为对最高层内容
+    的概括性解读。包装后明确要求从概念本身展开、点出与父层的衔接。
+
+    判定：非空、<=24 字、不含问号且不是已包装格式 -> 视为概念名。
+    用户完整问句（含问号或较长）原样返回。
+    """
+    q = (question or "").strip()
+    if not q:
+        return q
+    if len(q) > 24 or "?" in q or "？" in q or q.startswith("深入解释"):
+        return q
+    # 从父层问题提取父概念名（「X」格式），给"在什么语境下"一个锚点
+    import re as _re
+    m = _re.search(r"「(.+?)」", parent_question or "")
+    if m:
+        parent_concept = m.group(1)
+    else:
+        # 父层是自由问句：剥掉疑问前缀后截断，避免锚点变成"什么是 LLM 评测中的"
+        pq = _re.sub(r"^(什么是|请(详细)?(解释|介绍|说明)|如何理解|为什么|详述|解释|介绍)\s*", "",
+                     (parent_question or "").strip())
+        parent_concept = pq[:12]
+    if parent_concept and parent_concept != q:
+        return (
+            f"深入解释「{q}」：它是什么、核心机制/原理是什么、"
+            f"与「{parent_concept}」的关系和在其中的具体角色，并给一个典型示例。"
+            f"从「{q}」本身展开，不要概括复述上层主题。"
+        )
+    return (
+        f"深入解释「{q}」：它是什么、核心机制/原理是什么、有什么典型示例，"
+        f"以及为什么重要。从「{q}」本身展开，不要概括复述上层主题。"
+    )
+
+
 def _is_uuid(v) -> bool:
     """concept_id 合法性：UUID 才能进 UUID 列查询（前端"标为概念下钻"的
     local_* 临时 id 会让 asyncpg 在编码阶段抛 DataError -> 500）。"""

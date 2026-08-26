@@ -1,8 +1,9 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react'
 import * as api from '../api/client'
-import { useStore, updateLayer, clearInflight, setLastViewed, guardAction, goBack, goForward, findNode, getPathNodes } from '../store/qaStore'
+import { useStore, updateLayer, clearInflight, setLastViewed, guardAction, goBack, goForward, findNode, getPathNodes, getState } from '../store/qaStore'
 import { renderMarkdown } from './markdownRenderer.jsx'
 import ReaderControls from './ReaderControls'
+import AskDialog from './AskDialog'
 
 // 阅读主区：当前层的回答正文 + 内联概念 + 层摘要 + 正文选中创建概念
 // 签名元素：层标签左侧的"生长茎"——depth 越深茎越长，跨层连续生长感
@@ -79,14 +80,66 @@ function ReadingLayer({ layer, depth, inflight, canBack, canForward, historyIdx,
   // concepts 用于:正文 markdown 渲染时做内联概念切分(可下钻) + unmatched 提示
   // 内联概念保留全部(正文自然出现的，是本层"自选概念"，和上一层展示一致)；
   // 跨层去重只对 unmatched 块生效(抽取了但正文没出现的，避免跨层重复罗列)
-  const concepts = layer.concepts || []
+  //
+  // 流式动态高亮(三层来源，权威优先):
+  //   1. 权威列表 layer.concepts(尾部 ConceptBlock，整层生成完才到)
+  //   2. 种子词:question 里的「X」引号词+英文术语(流式第 0 秒就有--
+  //      用户点名的概念，正文出现即刻高亮)
+  //   3. 增量候选 layer.candidates(后端 answer_delta 流上 jieba 抽取,
+  //      SSE concept_candidates 事件推来) + 树上已有概念(根层导入+历层抽取)
+  // 权威列表到达后只切权威(避免候选噪声盖过 LLM 精判)。
+  const seedTerms = useMemo(() => extractSeedTerms(layer.question), [layer.question])
+  const treeConcepts = useMemo(() => {
+    const seen = new Set()
+    const acc = []
+    for (const n of getPathNodes()) {
+      for (const c of (n.concepts || [])) {
+        if (c.concept_id && !seen.has(c.concept_id)) {
+          seen.add(c.concept_id)
+          acc.push(c)
+        }
+      }
+    }
+    return acc
+  }, [currentPathKey(layer.qa_id)])
+  const ownConcepts = layer.concepts || []
+  // 候选/种子词统一映射为伪概念对象参与切分(与权威概念同结构,
+  // ConceptInline 按有无 concept_id 区分下钻链路)
+  const candidates = useMemo(() => {
+    const items = []
+    const seen = new Set()
+    const push = (name) => {
+      if (!name || seen.has(name)) return
+      seen.add(name)
+      items.push({ name, canonical_name: name, aliases: [], confidence: 0.5, candidate: true })
+    }
+    for (const c of seedTerms) push(c)
+    for (const c of (layer.candidates || [])) push(c.name)
+    return items
+  }, [seedTerms, layer.candidates])
+  // 权威到达后不完全替换候选：候选按名称与权威合并去重，
+  // 未被权威覆盖的候选保留为内联虚线 chip -- "慢慢标关键词"的
+  // 过程不因权威到达而倒退消失（用户点了下钻也能走 local_* 链路）
+  const concepts = useMemo(() => {
+    if (ownConcepts.length === 0) return [...candidates, ...treeConcepts]
+    if (candidates.length === 0) return ownConcepts
+    const covered = new Set()
+    for (const c of ownConcepts) {
+      covered.add(c.canonical_name)
+      for (const a of (c.aliases || [])) covered.add(a)
+    }
+    const extra = candidates.filter((c) => !covered.has(c.canonical_name))
+    return extra.length > 0 ? [...ownConcepts, ...extra] : ownConcepts
+  }, [ownConcepts, candidates, treeConcepts])
   const { unmatched } = useMemo(
     () => buildInlineSegments(layer.answer || '', concepts),
     [layer.answer, concepts]
   )
-  // unmatched 跨层去重：祖先层已标识的概念不在本层 unmatched 块重复显示
+  // unmatched 跨层去重：祖先层已标识的概念不在本层 unmatched 块重复显示。
+  // 候选/种子词不进 unmatched 块(它们本来就在正文里内联了，再罗列是噪声)
   const unmatchedDedup = useMemo(() => {
-    if (unmatched.length === 0) return unmatched
+    const real = unmatched.filter((c) => !c.candidate)
+    if (real.length === 0) return real
     const seen = new Set()
     for (const n of getPathNodes()) {
       if (n.qa_id === layer.qa_id) break  // 到本层为止
@@ -94,12 +147,66 @@ function ReadingLayer({ layer, depth, inflight, canBack, canForward, historyIdx,
         if (c.concept_id) seen.add(c.concept_id)
       }
     }
-    if (seen.size === 0) return unmatched
-    return unmatched.filter((c) => !c.concept_id || !seen.has(c.concept_id))
+    if (seen.size === 0) return real
+    return real.filter((c) => !c.concept_id || !seen.has(c.concept_id))
   }, [unmatched, layer.qa_id])
 
   // 复制原文 + toast 反馈
   const [copied, setCopied] = useState(false)
+  // 针对性提问（页边追问）：就选段/就这层发问，问题长成探索树子层
+  const [askAnchor, setAskAnchor] = useState(null)   // { kind, text, label } | null（null=关）
+  const [asking, setAsking] = useState(false)
+
+  // 选中气泡（InlineAnswer 内嵌组件）经事件总线开提问框
+  useEffect(() => {
+    const onAskSelection = (e) => setAskAnchor(e.detail)
+    window.addEventListener('starmind:askSelection', onAskSelection)
+    return () => window.removeEventListener('starmind:askSelection', onAskSelection)
+  }, [])
+
+  // 子层 SSE 订阅（onDrill / onAsk 共用：drilldown -> pushLayer -> subscribe）
+  function subscribeChild(childQaId) {
+    api.subscribeStream(childQaId, {
+      answer_delta: (ev) => {
+        const cur = findNode(childQaId)
+        updateLayer(childQaId, { answer: (cur?.answer || '') + ev.text })
+      },
+      status: (ev) => updateLayer(childQaId, { status: ev.status }),
+      concepts: (ev) => updateLayer(childQaId, { concepts: ev.concepts }),
+      concept_candidates: (ev) => {
+        const cur = findNode(childQaId)
+        const prev = cur?.candidates || []
+        updateLayer(childQaId, { candidates: [...prev, ...ev.concepts] })
+      },
+      layer_summary: (ev) => updateLayer(childQaId, { layer_summary: ev.layer_summary }),
+      done: () => { updateLayer(childQaId, { loading: false }); clearInflight() },
+      error: () => { updateLayer(childQaId, { loading: false }); clearInflight() },
+    })
+  }
+
+  // 提问：mode=ask 走 drilldown 链路（问题原样作子层 question，不概念包装）
+  async function onAskSubmit(question) {
+    if (!guardAction(layer.qa_id)) return
+    setAsking(true)
+    try {
+      const child = await api.drillDown(layer.qa_id, `local_ask_${Date.now()}`, question, 'ask')
+      const { pushLayer } = await import('../store/qaStore')
+      pushLayer({
+        qa_id: child.qa_id, question: child.question || question, answer: '',
+        status: 'generating', concepts: [], layer_summary: '', loading: true,
+        context: child.context || null,
+        origin: 'ask',          // 提问层：树上显示原始问题 + 问章
+      })
+      subscribeChild(child.qa_id)
+      setAskAnchor(null)  // 成功后关对话框
+    } catch (err) {
+      console.error('[onAskSubmit] 提问失败:', err)
+      clearInflight()
+    } finally {
+      setAsking(false)
+    }
+  }
+
   async function onCopy() {
     const text = layer.answer || ''
     let ok = false
@@ -126,6 +233,13 @@ function ReadingLayer({ layer, depth, inflight, canBack, canForward, historyIdx,
 
   return (
     <div style={styles.wrap}>
+      <AskDialog
+        open={!!askAnchor}
+        anchor={askAnchor}
+        submitting={asking}
+        onSubmit={onAskSubmit}
+        onClose={() => setAskAnchor(null)}
+      />
       {copied && (
         <div style={styles.toastWrap}>
           <span style={styles.toast}>已复制原文</span>
@@ -163,6 +277,14 @@ function ReadingLayer({ layer, depth, inflight, canBack, canForward, historyIdx,
             {layer.loading && <span style={styles.loadingDot} title="生成中" />}
             {layer.answer && (
               <button
+                style={styles.askBtn}
+                onClick={() => setAskAnchor({ kind: 'layer', text: layer.question, label: '就这层追问' })}
+                disabled={!!inflight && inflight !== layer.qa_id}
+                title="就这层内容提出追问，问题会长成子层"
+              >追问</button>
+            )}
+            {layer.answer && (
+              <button
                 className="copyBtn"
                 style={{ ...styles.copyBtn, ...(copied ? styles.copyBtnDone : {}) }}
                 onClick={onCopy}
@@ -197,8 +319,10 @@ function ReadingLayer({ layer, depth, inflight, canBack, canForward, historyIdx,
           </aside>
         )}
 
-        {/* 未匹配的概念(抽取了但正文没出现) */}
-        {unmatchedDedup.length > 0 && (
+        {/* 未匹配的概念(抽取了但正文没出现)。
+            仅权威列表到位后显示--流式期间 concepts 是树上已有概念的投影,
+            大多不在本层正文,显示会造成满屏无关 chip */}
+        {ownConcepts.length > 0 && unmatchedDedup.length > 0 && (
           <div style={styles.unmatchedBlock}>
             <div style={styles.unmatchedLabel}>抽取但正文未出现</div>
             <div style={styles.unmatchedChips}>
@@ -210,7 +334,7 @@ function ReadingLayer({ layer, depth, inflight, canBack, canForward, historyIdx,
         )}
 
         {/* 选中创建提示 —— 静默脚注,不抢正文 */}
-        <div style={styles.hint}>选中正文里的词，可标为概念并下钻</div>
+        <div style={styles.hint}>选中正文可标为概念下钻，也可就选段或就这层提问</div>
       </div>
     </div>
   )
@@ -270,6 +394,19 @@ function InlineAnswer({ answer, concepts, layer, inflight }) {
   const [selection, setSelection] = useState(null)
   const articleRef = useRef(null)
 
+  // 流式渲染节流：answer_delta 高频到达(网关倾泻期每~27ms一个)时，
+  // 每个 delta 都全量重跑 renderMarkdown(O(正文×概念)切分)会饱和主线程，
+  // 正文"卡顿式跳出"、候选 chip 渐次点亮的过程也被吞掉。
+  // 本地显示副本 100ms 刷新一次(渲染次数降 ~75%)；
+  // 流结束(loading=false)立即同步，不影响终态。
+  const [displayAnswer, setDisplayAnswer] = useState(answer)
+  useEffect(() => {
+    if (answer === displayAnswer) return
+    if (!layer.loading) { setDisplayAnswer(answer); return }
+    const id = setTimeout(() => setDisplayAnswer(answer), 100)
+    return () => clearTimeout(id)
+  }, [answer, layer.loading, displayAnswer])
+
   // 概念渲染回调:markdown 渲染器在概念位置调它,返回内联 ConceptInline
   const renderConcept = (concept) => (
     <ConceptInline concept={concept} inflight={inflight} layer={layer} inline />
@@ -304,6 +441,8 @@ function InlineAnswer({ answer, concepts, layer, inflight }) {
         qa_id: child.qa_id, question: child.question || text, answer: '',
         status: 'generating', concepts: [], layer_summary: '', loading: true,
         context: child.context || null,
+        origin: 'concept',      // 概念层：树上只显示概念名
+        displayLabel: text,
       })
       api.incrementExplore(localId)
       api.subscribeStream(child.qa_id, {
@@ -313,6 +452,11 @@ function InlineAnswer({ answer, concepts, layer, inflight }) {
         },
         status: (ev) => updateLayer(child.qa_id, { status: ev.status }),
         concepts: (ev) => updateLayer(child.qa_id, { concepts: ev.concepts }),
+        concept_candidates: (ev) => {
+          const cur = findNode(child.qa_id)
+          const prev = cur?.candidates || []
+          updateLayer(child.qa_id, { candidates: [...prev, ...ev.concepts] })
+        },
         layer_summary: (ev) => updateLayer(child.qa_id, { layer_summary: ev.layer_summary }),
         done: () => { updateLayer(child.qa_id, { loading: false }); clearInflight() },
         error: () => { updateLayer(child.qa_id, { loading: false }); clearInflight() },
@@ -328,11 +472,24 @@ function InlineAnswer({ answer, concepts, layer, inflight }) {
 
   return (
     <div ref={articleRef} style={styles.articleInner} onMouseUp={handleMouseUp}>
-      {renderMarkdown(answer, concepts, renderConcept)}
+      {renderMarkdown(displayAnswer, concepts, renderConcept)}
       {selection && (
         <div style={{ ...styles.popover, left: selection.x, top: selection.y }}>
           <button style={styles.popoverBtn} onClick={() => onCreateAndDrill(selection.text)}>
             标为概念·下钻
+          </button>
+          <button
+            style={{ ...styles.popoverBtn, ...styles.popoverBtnAsk }}
+            onClick={() => {
+              window.dispatchEvent(new CustomEvent('starmind:askSelection', {
+                detail: { kind: 'selection', text: selection.text, label: '就选段追问' },
+              }))
+              setSelection(null)
+              window.getSelection()?.removeAllRanges()
+            }}
+            title="针对选段提出问题，问题长成子层"
+          >
+            就选段提问
           </button>
         </div>
       )}
@@ -347,6 +504,8 @@ function ConceptInline({ concept, inflight, layer, inline }) {
   const understood = concept.understood || (concept.explore_count >= 2)
   const tier = tierForCount(concept.explore_count || 0)
   const name = concept.canonical_name || concept.name
+  // 候选/种子词:本地临时高亮,无 concept_id,下钻走"标为概念"链路
+  const isCandidate = !!concept.candidate && !concept.concept_id
 
   async function onDrill() {
     // guardAction 传当前层 qa_id：本层在途允许，别的层在途才拒（原传 null 导致 inflight 非空即锁死）
@@ -355,14 +514,19 @@ function ConceptInline({ concept, inflight, layer, inline }) {
     setDrilling(true)
     setLastViewed(layer.qa_id, concept.concept_id)
     try {
-      const child = await api.drillDown(layer.qa_id, concept.concept_id, name)
+      // 候选无 concept_id:走 local_* 链路(后端 _is_uuid 守卫跳过历史查询,
+      // 子层抽取归一化后建真节点),与"标为概念下钻"一致
+      const conceptId = concept.concept_id || `local_${Date.now()}`
+      const child = await api.drillDown(layer.qa_id, conceptId, name)
       const { pushLayer } = await import('../store/qaStore')
       pushLayer({
         qa_id: child.qa_id, question: child.question || name, answer: '',
         status: 'generating', concepts: [], layer_summary: '', loading: true,
         context: child.context || null,
+        origin: 'concept',      // 概念层：树上只显示概念名
+        displayLabel: name,
       })
-      api.incrementExplore(concept.concept_id)
+      if (concept.concept_id) api.incrementExplore(concept.concept_id)
       api.subscribeStream(child.qa_id, {
         answer_delta: (ev) => {
           const cur = findNode(child.qa_id)
@@ -370,6 +534,11 @@ function ConceptInline({ concept, inflight, layer, inline }) {
         },
         status: (ev) => updateLayer(child.qa_id, { status: ev.status }),
         concepts: (ev) => updateLayer(child.qa_id, { concepts: ev.concepts }),
+        concept_candidates: (ev) => {
+          const cur = findNode(child.qa_id)
+          const prev = cur?.candidates || []
+          updateLayer(child.qa_id, { candidates: [...prev, ...ev.concepts] })
+        },
         layer_summary: (ev) => updateLayer(child.qa_id, { layer_summary: ev.layer_summary }),
         done: () => { updateLayer(child.qa_id, { loading: false }); clearInflight() },
         error: () => { updateLayer(child.qa_id, { loading: false }); clearInflight() },
@@ -385,11 +554,18 @@ function ConceptInline({ concept, inflight, layer, inline }) {
   const busy = drilling
   if (inline) {
     // 内联在正文里:圆角按钮高亮(墨蓝浅底/陶土棕已理解),不抢正文
+    // 候选(无 concept_id):虚线边框轻样式--"疑似概念"与权威概念可区分,
+    // 点击同样可下钻
     const understoodStyle = understood ? {
       background: 'var(--settled-soft)',
       color: 'var(--settled)',
       border: '1px solid var(--settled-soft)',
       cursor: 'default',
+    } : isCandidate ? {
+      background: 'transparent',
+      color: 'var(--active-ink)',
+      border: '1px dashed var(--active-soft)',
+      cursor: busy ? 'progress' : 'pointer',
     } : busy ? {
       background: 'var(--active-soft)',
       color: 'var(--active-ink)',
@@ -406,16 +582,18 @@ function ConceptInline({ concept, inflight, layer, inline }) {
       <span
         style={{ ...styles.inline, ...understoodStyle }}
         data-testid="concept-chip"
-        data-variant="inline"
+        data-variant={isCandidate ? 'candidate' : 'inline'}
         onMouseEnter={() => setShowTip(true)}
         onMouseLeave={() => setShowTip(false)}
         onClick={onDrill}
-        title={understood ? '已理解' : (busy ? '下钻中…' : '点击下钻')}
+        title={understood ? '已理解' : (busy ? '下钻中…' : (isCandidate ? '候选概念 · 点击下钻' : '点击下钻'))}
       >
         {busy ? `${name}…` : name}
         {showTip && !busy && (
           <span style={styles.tooltip}>
-            {understood ? '已理解' : `点击下钻 · 置信度 ${(concept.confidence * 100).toFixed(0)}%`}
+            {understood ? '已理解' : isCandidate
+              ? '候选概念 · 点击下钻'
+              : `点击下钻 · 置信度 ${(concept.confidence * 100).toFixed(0)}%`}
           </span>
         )}
       </span>
@@ -442,6 +620,31 @@ function ConceptInline({ concept, inflight, layer, inline }) {
 }
 
 // —— 把正文按概念首次出现位置切分成 segments ——
+// -- 流式动态高亮:树上概念并集的 memo 依赖键 --
+// currentPath 每次重渲染引用不稳,取路径 qa_id 串作稳定键
+function currentPathKey() {
+  return getState().currentPath.join('>')
+}
+
+// -- question 种子词:流式第 0 秒就可参与正文高亮 --
+// 用户点名的概念(下钻问句「X」)和英文术语(LLM/RAG/CAP)在问题里就有,
+// 不必等抽取。正文出现即刻高亮 -- "想找的概念最快返回"的第一通道。
+const SEED_EN = /[A-Za-z][A-Za-z0-9+.-]{1,19}/g
+const SEED_QUOTED = /「([^「」]{2,12})」/g
+function extractSeedTerms(question) {
+  const out = new Set()
+  if (!question) return []
+  // 「X」引号词整体(下钻包装问句的核心概念,如「一致性哈希」)
+  for (const m of question.matchAll(SEED_QUOTED)) {
+    if (m[1].length <= 8) out.add(m[1])
+  }
+  // 英文术语词元
+  for (const m of question.matchAll(SEED_EN)) {
+    out.add(m[0])
+  }
+  return [...out]
+}
+
 function buildInlineSegments(answer, concepts) {
   if (!answer) return { segments: [{ type: 'text', text: '' }], unmatched: [] }
   // 收集每个概念的匹配位置（canonical_name + aliases，取最早出现）
@@ -650,6 +853,18 @@ const styles = {
     background: 'var(--ink)', color: 'var(--paper)', border: 'none',
     padding: '6px 12px', fontSize: 12, cursor: 'pointer',
     borderRadius: 'var(--r-sm)', fontFamily: 'var(--sans)', fontWeight: 500,
+  },
+  // 选中气泡里的"提问"按钮：墨蓝描边幽灵态，与"标为概念"实心态区分--
+  // 追问是开放动作（用户自己写），标概念是收敛动作（交给模型展开）
+  popoverBtnAsk: {
+    background: 'transparent', color: 'var(--paper)',
+    border: '1px solid rgba(250,248,243,0.45)',
+  },
+  // 层头部"追问"按钮：与"复制"同级的轻量文字钮，衬线体手记气质
+  askBtn: {
+    background: 'none', border: '1px solid var(--rule)', color: 'var(--ink-soft)',
+    padding: '3px 10px', fontSize: 11, cursor: 'pointer', borderRadius: 'var(--r-sm)',
+    fontFamily: 'var(--serif)', letterSpacing: '0.04em', transition: 'all 0.15s',
   },
   hint: {
     marginTop: 28, fontSize: 11, color: 'var(--ink-faint)', textAlign: 'center',

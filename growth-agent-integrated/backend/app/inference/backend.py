@@ -97,6 +97,24 @@ class StubLLMBackend:
         return None
 
 
+def _concept_system_prompt(model: str = "llm") -> str:
+    """sentinel 协议 system 提示（含 ConceptBlock schema）。
+
+    不给 schema 时 glm 会自由发挥成 {"ms": [...], "one_line": ...} 之类的
+    自定义结构 -> ConceptBlock 校验必败 -> 每次 L1 降级（retry/fallback
+    两次 60s 超时调用，全链路拖 3-4 分钟）。
+    """
+    return (
+        "先输出自然语言正文，然后另起一行输出 "
+        f"{settings.concept_sentinel}，最后输出符合以下 schema 的 JSON"
+        "（裸 JSON，不要 markdown 代码块）：\n"
+        '{"concepts": [{"name": "概念规范名", "aliases": ["别名"], '
+        f'"confidence": 0.9}}, ...], "model": "{model}"}}\n'
+        "name 为 2-8 字核心概念名，抽 3-8 个；aliases 含中英文/缩写；"
+        "confidence 取 0-1。正文里禁止出现 sentinel 标记。"
+    )
+
+
 # ---------------------------------------------------------------------------
 # OpenAI 兼容后端（可选，配置后启用真实推理）
 # ---------------------------------------------------------------------------
@@ -127,11 +145,13 @@ class OpenAICompatibleBackend:
             payload["thinking"] = {"type": "disabled"}
         return payload
 
+    def _concept_system(self) -> str:
+        return _concept_system_prompt(self.model or "llm")
+
     async def stream(self, prompt: str) -> AsyncIterator[str]:
         import httpx
         self._aborted = False
-        messages = [{"role": "system", "content": "先输出正文，再换行输出 "
-            f"{settings.concept_sentinel}，最后输出 ConceptBlock JSON。"},
+        messages = [{"role": "system", "content": self._concept_system()},
             {"role": "user", "content": prompt}]
         payload = self._payload(messages, stream=True)
         async with httpx.AsyncClient(timeout=settings.inference_timeout_s) as client:
@@ -220,6 +240,9 @@ class AnthropicBackend:
         # 复用 thinking 开关
         self.thinking_enabled = os.getenv("LLM_THINKING", "disabled").lower() in ("1", "true", "enabled", "on")
 
+    def _concept_system(self) -> str:
+        return _concept_system_prompt(self.model or "llm")
+
     def _headers(self):
         return {
             "x-api-key": self.api_key,
@@ -270,8 +293,7 @@ class AnthropicBackend:
         import httpx
         self._aborted = False
         messages = [
-            {"role": "system", "content": "先输出正文，再换行输出 "
-                f"{settings.concept_sentinel}，最后输出 ConceptBlock JSON。"},
+            {"role": "system", "content": self._concept_system()},
             {"role": "user", "content": prompt},
         ]
         payload = self._payload(messages, stream=True)

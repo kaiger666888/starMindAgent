@@ -31,6 +31,12 @@ SYSTEM_PROMPT = (
     # 长输出挤掉 sentinel JSON（概念抽取退兜底，3-4 倍调用放大），
     # 且长 prompt/长输出直接推高推理侧内存峰值（网关 1210 OOM）。
     "回答精炼：正文控制在 500 字以内，聚焦当前问题的核心。"
+    # 防同质化：下钻层的核心诉求是"从目标概念展开"，而非概括上层主题。
+    # 不约束时模型倾向写主题概述（最安全的答法），导致每层回答趋同。
+    "回答必须围绕问题中的目标概念本身展开（它是什么、机制/原理、典型示例），"
+    "禁止写成对上层主题的概括性复读；"
+    "若提供了探索路径，聚焦该概念在父概念语境中的具体角色，"
+    "不重复上层已解释过的内容。"
 )
 
 
@@ -64,12 +70,15 @@ def compress_chain(chain: list[ChainNode]) -> str:
     ordered = sorted(chain, key=lambda n: n.depth)
     for n in ordered:
         lines.append(f"L{n.depth}: {n.concept}（{n.question[:20]}）")
-    summary = "\n".join(lines)
+    # 引导语：让模型明确这是"已走过的路径背景"，用于定位当前概念的位置，
+    # 而不是要被概括复述的对象（防同质化的关键）
+    header = "用户探索路径（浅 -> 深，仅作背景定位，不要复述）："
+    summary = header + "\n" + "\n".join(lines)
     while _approx_tokens(summary) > _CHAIN_BUDGET and len(lines) > 1:
         # 丢弃最浅层细节，只留概念名
         first = ordered.pop(0)
         lines = [f"L{n.depth}: {n.concept}" for n in ordered]
-        summary = "\n".join(lines)
+        summary = header + "\n" + "\n".join(lines)
         if not ordered:
             break
     return summary

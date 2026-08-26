@@ -236,3 +236,10 @@
 .readerControls:hover { opacity: 1 !important; }
 .readerControls:focus-within { opacity: 1 !important; }
 .copyBtn:hover { opacity: 1 !important; color: var(--settled); border-color: var(--settled); }
+
+/* 树节点"问"入口:hover 行时显形(inline style 无法表达 hover) */
+.treeNode:hover .treeAskBtn,
+.treeAskBtn:focus-visible { opacity: 1; }
+.treeAskBtn:hover { border-color: var(--active); background: var(--active-soft); }
+/* 层头部"追问"按钮:hover 墨蓝化 */
+.askBtn:hover { color: var(--active); border-color: var(--active); }

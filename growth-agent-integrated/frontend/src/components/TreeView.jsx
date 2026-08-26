@@ -8,6 +8,18 @@ import ConceptSummary from './ConceptSummary'
 
 const MAX_DEPTH = 6
 
+// 节点类型与显示标签：概念层只显概念名（名词骨架），提问层显原始问题。
+// 回退链：displayLabel 字段 -> question 按下钻包装格式「深入解释「X」」解析
+// -> origin 无标记的旧/根层，显示 question 原文
+function parseLayerInfo(node) {
+  const q = node.question || ''
+  if (node.origin === 'ask') return { kind: 'ask', label: q }
+  if (node.displayLabel) return { kind: 'concept', label: node.displayLabel }
+  const m = q.match(/^深入解释「(.+?)」/)
+  if (m) return { kind: 'concept', label: m[1] }
+  return { kind: 'plain', label: q }
+}
+
 export default function TreeView() {
   const tree = useStore((s) => s.tree)
   const currentPath = useStore((s) => s.currentPath)
@@ -45,6 +57,11 @@ export default function TreeView() {
       },
       status: (ev) => updateLayer(qaId, { status: ev.status }),
       concepts: (ev) => updateLayer(qaId, { concepts: ev.concepts }),
+      concept_candidates: (ev) => {
+        const cur = findNode(qaId)
+        const prev = cur?.candidates || []
+        updateLayer(qaId, { candidates: [...prev, ...ev.concepts] })
+      },
       layer_summary: (ev) => updateLayer(qaId, { layer_summary: ev.layer_summary }),
       done: () => { updateLayer(qaId, { loading: false }); clearInflight() },
       error: () => { updateLayer(qaId, { loading: false }); clearInflight() },
@@ -123,6 +140,13 @@ export default function TreeView() {
             depth={1}
             currentPath={currentPath}
             onSwitch={(qid) => popToLayer(qid)}
+            onAsk={(node) => {
+              // 追问前先切到该层（AskDialog 挂在 ReadingLayer，层对了才有上下文）
+              popToLayer(node.qa_id)
+              window.dispatchEvent(new CustomEvent('starmind:askSelection', {
+                detail: { kind: 'layer', text: node.question, label: '就这层追问' },
+              }))
+            }}
           />
         )}
       </nav>
@@ -133,12 +157,18 @@ export default function TreeView() {
 }
 
 // 递归渲染树节点：当前 path 上的层高亮，子分支缩进
-function TreeNode({ node, depth, currentPath, onSwitch }) {
+function TreeNode({ node, depth, currentPath, onSwitch, onAsk }) {
   if (!node) return null
   const isCurrent = currentPath[currentPath.length - 1] === node.qa_id
   const onPath = currentPath.includes(node.qa_id)  // 在当前路径上
   const stemColor = isCurrent ? 'var(--active)' : onPath ? 'var(--rule)' : 'var(--rule-soft)'
   const hasChildren = node.children && node.children.length > 0
+  // 节点类型与显示标签（结构即信息）：
+  //   概念下钻层 -> 只显示概念名（名词骨架，树的主体）
+  //   提问层     -> 显示原始问题 + 「问」章（穿插的追问插页）
+  // 旧数据回退：question 以「深入解释「X」」开头的解析出概念名
+  const layerInfo = parseLayerInfo(node)
+  const isAsk = layerInfo.kind === 'ask'
   // 该层概念完成度:已理解数 / 总数(无概念则不显示)
   const concepts = node.concepts || []
   const understoodN = concepts.filter((c) => c.understood || (c.explore_count >= 2)).length
@@ -149,53 +179,69 @@ function TreeNode({ node, depth, currentPath, onSwitch }) {
   const hasPrep = typeof prep === 'number' && prep > 0
   return (
     <div style={styles.treeNode}>
-      <button
-        style={{
-          ...styles.layerBtn,
-          borderLeft: `2px solid ${stemColor}`,
-          background: isCurrent ? 'var(--active-soft)' : 'transparent',
-          opacity: isCurrent ? 1 : 0.72,
-          fontWeight: isCurrent ? 500 : 400,
-        }}
-        onClick={() => onSwitch(node.qa_id)}
-        title={isCurrent ? '当前层' : '点击切换到这层'}
-      >
-        <div style={styles.layerHead}>
-          <span style={styles.depthTag}>L{depth}</span>
-          <span style={styles.q}>{node.question}</span>
-          {node.loading && <span style={styles.loadingDot} />}
-          {hasChildren && <span style={styles.branchMark}>{hasChildren > 1 ? `┬${hasChildren}` : '└'}</span>}
-        </div>
-        {node.layer_summary && (
-          <div style={styles.preview}>{node.layer_summary}</div>
-        )}
-        {/* 下钻准备度进度条:后端为这层关键词检索材料准备好了多少。
-            准备中=墨蓝(活跃信号),就绪(100%)=陶土棕(沉淀)。
-            无 context 的层(提问树根/未导入材料)回退到概念完成度。 */}
-        {hasPrep ? (
-          <div style={styles.layerProgRow}>
-            <span style={styles.layerProgLabel}>
-              准备 {Math.round(prep * 100)}%
+      <div style={styles.layerRow}>
+        <button
+          style={{
+            ...styles.layerBtn,
+            borderLeft: `2px solid ${stemColor}`,
+            background: isCurrent ? 'var(--active-soft)' : 'transparent',
+            opacity: isCurrent ? 1 : 0.72,
+            fontWeight: isCurrent ? 500 : 400,
+            flex: 1, minWidth: 0,
+          }}
+          onClick={() => onSwitch(node.qa_id)}
+          title={isCurrent ? '当前层' : (layerInfo.label !== node.question ? node.question : '点击切换到这层')}
+        >
+          <div style={styles.layerHead}>
+            <span style={styles.depthTag}>L{depth}</span>
+            {isAsk && <span style={styles.askMark} title="提问层">问</span>}
+            <span style={{ ...styles.q, ...(isAsk ? styles.qAsk : styles.qConcept) }}>
+              {layerInfo.label}
             </span>
-            <span style={styles.layerProgBar}>
-              <span style={{
-                ...styles.layerProgFill,
-                width: `${prep * 100}%`,
-                background: prep >= 1 ? 'var(--settled)' : 'var(--active)',
-              }} />
-            </span>
+            {node.loading && <span style={styles.loadingDot} />}
+            {hasChildren && <span style={styles.branchMark}>{hasChildren > 1 ? `┬${hasChildren}` : '└'}</span>}
           </div>
-        ) : layerPct !== null && (
-          <div style={styles.layerProgRow}>
-            <span style={styles.layerProgLabel}>
-              概念 {understoodN}/{concepts.length}
-            </span>
-            <span style={styles.layerProgBar}>
-              <span style={{ ...styles.layerProgFill, width: `${layerPct * 100}%` }} />
-            </span>
-          </div>
-        )}
-      </button>
+          {node.layer_summary && (
+            <div style={styles.preview}>{node.layer_summary}</div>
+          )}
+          {/* 下钻准备度进度条:后端为这层关键词检索材料准备好了多少。
+              准备中=墨蓝(活跃信号),就绪(100%)=陶土棕(沉淀)。
+              无 context 的层(提问树根/未导入材料)回退到概念完成度。 */}
+          {hasPrep ? (
+            <div style={styles.layerProgRow}>
+              <span style={styles.layerProgLabel}>
+                准备 {Math.round(prep * 100)}%
+              </span>
+              <span style={styles.layerProgBar}>
+                <span style={{
+                  ...styles.layerProgFill,
+                  width: `${prep * 100}%`,
+                  background: prep >= 1 ? 'var(--settled)' : 'var(--active)',
+                }} />
+              </span>
+            </div>
+          ) : layerPct !== null && (
+            <div style={styles.layerProgRow}>
+              <span style={styles.layerProgLabel}>
+                概念 {understoodN}/{concepts.length}
+              </span>
+              <span style={styles.layerProgBar}>
+                <span style={{ ...styles.layerProgFill, width: `${layerPct * 100}%` }} />
+              </span>
+            </div>
+          )}
+        </button>
+        {/* 追问入口：hover 露出，点击就这层提问（不切层） */}
+        <button
+          style={styles.treeAskBtn}
+          onClick={(e) => {
+            e.stopPropagation()
+            onAsk(node)
+          }}
+          title="就这层追问"
+          aria-label={`就第 ${depth} 层追问`}
+        >问</button>
+      </div>
       {/* 子分支：当前路径上的层展开 children，非路径上的层也展开（树导航可见） */}
       {hasChildren && (
         <div style={styles.childrenWrap}>
@@ -206,6 +252,7 @@ function TreeNode({ node, depth, currentPath, onSwitch }) {
               depth={depth + 1}
               currentPath={currentPath}
               onSwitch={onSwitch}
+              onAsk={onAsk}
             />
           ))}
         </div>
@@ -242,6 +289,18 @@ const styles = {
   emptyStem: { width: 2, height: 22, borderRadius: 1, background: 'var(--rule)' },
   tree: { display: 'flex', flexDirection: 'column', gap: 1 },
   treeNode: { position: 'relative' },
+  // 层条目行：按钮 + 追问入口并排（追问按钮 hover 露出，平时占位不跳版式）
+  layerRow: { display: 'flex', alignItems: 'stretch' },
+  // 树上"问"入口：小方章（与 AskDialog 的印章呼应），hover 才显形--
+  // 树是导航区，追问是次级动作，不能让每个节点常驻一个按钮
+  treeAskBtn: {
+    width: 20, flexShrink: 0, alignSelf: 'center', marginLeft: 4,
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    background: 'transparent', border: '1px solid transparent',
+    color: 'var(--active)', borderRadius: 'var(--r-sm)',
+    fontFamily: 'var(--serif)', fontSize: 11, fontWeight: 600,
+    cursor: 'pointer', opacity: 0, transition: 'opacity 0.15s, border-color 0.15s',
+  },
   childrenWrap: { marginLeft: 14, display: 'flex', flexDirection: 'column', gap: 1, marginTop: 1 },
   layerBtn: {
     textAlign: 'left', background: 'transparent', border: 'none', borderLeft: '2px solid transparent',
@@ -253,10 +312,27 @@ const styles = {
     fontFamily: 'var(--mono)', fontSize: 9, color: 'var(--active)', background: 'var(--paper)',
     borderRadius: 'var(--r-sm)', padding: '1px 5px', letterSpacing: '0.04em', flexShrink: 0,
   },
+  // 提问层「问」章：与 AskDialog 印章同构（描边小方块衬线字），墨蓝描边
+  askMark: {
+    width: 14, height: 14, display: 'inline-flex', flexShrink: 0,
+    alignItems: 'center', justifyContent: 'center',
+    border: '1px solid var(--active)', color: 'var(--active)',
+    borderRadius: 'var(--r-sm)', fontFamily: 'var(--serif)',
+    fontSize: 9, fontWeight: 600, lineHeight: 1, alignSelf: 'center',
+  },
   q: {
     fontFamily: 'var(--serif)', fontSize: 12.5, fontWeight: 500, color: 'var(--ink)',
     lineHeight: 1.35, flex: 1, display: '-webkit-box', WebkitLineClamp: 2,
     WebkitBoxOrient: 'vertical', overflow: 'hidden',
+  },
+  // 概念层标签：名词骨架,单行截断(概念名短,两行占位是浪费);
+  // 字重 600 比提问层重一档 -- 名词是树的主干,问句是插页
+  qConcept: {
+    fontWeight: 600, WebkitLineClamp: 1, whiteSpace: 'nowrap',
+  },
+  // 提问层标签:常规字重,衬线斜度感由内容(问句)自带,不加修饰
+  qAsk: {
+    fontStyle: 'normal',
   },
   loadingDot: { width: 5, height: 5, borderRadius: '50%', background: 'var(--active)', animation: 'pulse 1.4s ease-in-out infinite', flexShrink: 0, alignSelf: 'center' },
   preview: {

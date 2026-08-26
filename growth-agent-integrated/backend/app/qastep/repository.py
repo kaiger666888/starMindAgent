@@ -86,6 +86,15 @@ class QAStepRepository:
                 )
 
     # —— 流式正文 checkpoint：增量落盘（harness 网络断开可从 offset 续推）——
+    async def reset_answer(self, qa_id: str) -> None:
+        """清空正文（重跑幂等）：刷新/断线重连会重新订阅 stream 并重跑推理，
+        append_answer 是纯追加（|| 拼接），不先清空会让正文越滚越长。"""
+        async with session_scope() as s:
+            await s.execute(text(
+                "UPDATE qa_step SET answer = '', answer_offset = 0 "
+                f"WHERE qa_id = {_uuid_cast(':id')}"
+            ).bindparams(id=qa_id))
+
     async def append_answer(self, qa_id: str, delta: str) -> None:
         async with session_scope() as s:
             # 用 PG 的 || 拼接，避免读改写竞态；answer_offset 跟随正文长度推进

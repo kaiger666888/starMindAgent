@@ -33,6 +33,10 @@ class QATransition(Enum):
     """状态机合法迁移，非法迁移抛 IllegalTransition。值用 (from, to) 元组表示。"""
     DONE_STREAMING = ("generating", "extracting")
     DONE_EXTRACTING = ("extracting", "waiting")
+    # 推理 error 即终态：立即回 waiting（客户端收到 error 事件即断开 SSE，
+    # generator 被关闭，若不先落状态 qa 会永远卡在 generating/extracting）
+    ERROR_ABORT = ("generating", "waiting")
+    ERROR_ABORT_EXTRACTING = ("extracting", "waiting")
     # 三个出口都从 waiting 出发
     DRILL_DOWN = ("waiting", "generating")     # fork 新 QAStep
     ROLLBACK = ("waiting", "waiting")           # 栈式回退，状态保留
@@ -109,6 +113,14 @@ class QAStepPipeline:
         if ctx and hasattr(self.inference, "set_material_context"):
             self.inference.set_material_context(ctx)
 
+    def set_chain(self, chain) -> None:
+        """注入概念链（下钻路径），推理 prompt 填概念链槽（防回答同质化）。
+
+        转发给 inference session -> InferenceClient，stream() 组 prompt 时用。
+        """
+        if chain and hasattr(self.inference, "set_chain"):
+            self.inference.set_chain(chain)
+
     async def run(self) -> AsyncIterator[dict]:
         """流式产出事件，供 SSE 推给前端。
 
@@ -128,6 +140,11 @@ class QAStepPipeline:
 
         answer_buf: list[str] = []
         concept_block: ConceptBlock | None = None
+        # 流式增量候选：正文每累积一段（句界）跑一次本地 jieba 候选抽取，
+        # 新词经 concept_candidates 事件推前端（阅读时动态高亮，不等整层
+        # 生成完的权威 concepts）。纯本地 CPU，ms 级，无新增 LLM 调用。
+        from app.qastep.stream_candidates import StreamCandidateExtractor
+        cand = StreamCandidateExtractor(self.question)
 
         async for ev in self.inference.stream():
             # 推理框架按协议产出三类原始事件：
@@ -139,6 +156,10 @@ class QAStepPipeline:
                 answer_buf.append(ev["text"])
                 await self.repo.append_answer(self.qa_id, ev["text"])  # checkpoint 落盘
                 yield {"type": "answer_delta", "text": ev["text"]}
+                # 增量候选（推过就不再重推，前端只并入不覆盖）
+                fresh = cand.feed(ev["text"])
+                if fresh:
+                    yield {"type": "concept_candidates", "concepts": fresh}
             elif kind == "sentinel":
                 # 正文已全部流出，进入 extracting（幂等：已是 EXTRACTING 则跳过）
                 from app.db import session_scope
@@ -154,6 +175,12 @@ class QAStepPipeline:
             elif kind == "error":
                 # 正文已开始流式渲染 -> 不可重试，降级（L1）
                 yield {"type": "error", "message": ev.get("message", "inference error")}
+                # error 即终态：客户端收到即断开 SSE，generator 会被关闭，
+                # 必须在此落 waiting，否则 qa 永远卡 generating/extracting
+                try:
+                    await self.repo.transition(self.qa_id, QAStatus.WAITING)
+                except Exception as e:  # noqa: BLE001  状态可能已被并发迁移
+                    log.warning("error-abort transition failed qa_id=%s: %s", self.qa_id, e)
                 break
 
         # —— extracting：概念归一化 + 落盘 ——

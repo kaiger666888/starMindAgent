@@ -60,6 +60,11 @@ class InferenceSession:
         if hasattr(self._client, "set_material_context"):
             self._client.set_material_context(ctx)
 
+    def set_chain(self, chain) -> None:
+        """转发概念链（下钻路径）给 InferenceClient，stream() 拼 prompt 填概念链槽。"""
+        if hasattr(self._client, "set_chain"):
+            self._client.set_chain(chain)
+
     async def abort(self) -> None:
         """用户回上层：发 abort，正文落盘保留。"""
         await self._client.abort()

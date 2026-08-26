@@ -25,9 +25,20 @@ def test_illegal_transition():
     # waiting -> extracting 非法（只能 extracting -> waiting）
     with pytest.raises(IllegalTransition):
         rt.assert_transition(QAStatus.WAITING, QAStatus.EXTRACTING)
-    # generating -> waiting 非法（必须经 extracting）
+    # extracting -> generating 非法
     with pytest.raises(IllegalTransition):
-        rt.assert_transition(QAStatus.GENERATING, QAStatus.WAITING)
+        rt.assert_transition(QAStatus.EXTRACTING, QAStatus.GENERATING)
+
+
+def test_error_abort_transitions():
+    """推理 error 即终态：generating/extracting 均可直接回 waiting。
+
+    客户端收到 error 事件即断开 SSE，若不允许此迁移 qa 会永远卡在
+    generating/extracting（generator 被 GC，收尾 transition 不再执行）。
+    """
+    rt = QAStepRuntime("qa1", "s1", "q")
+    rt.assert_transition(QAStatus.GENERATING, QAStatus.WAITING)
+    rt.assert_transition(QAStatus.EXTRACTING, QAStatus.WAITING)
 
 
 def test_prompt_hash_stable():

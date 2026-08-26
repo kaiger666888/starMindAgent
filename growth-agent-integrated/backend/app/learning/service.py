@@ -147,8 +147,11 @@ async def _extract_concepts_from_material(qa_id: str, material_id: str, session_
             ids_json = _json.dumps(cids)
             from app.db import is_sqlite
             if is_sqlite():
+                # sqlite 无 json 类型，CAST(:ids AS json) 按数字亲和性把 JSON
+                # 字符串转成 0（实测根层 ids 被写成整数 0，恢复会话概念全丢）。
+                # text() 直传字符串，列声明为 JSON 类型读取时自动反序列化。
                 await s.execute(sql_text(
-                    "UPDATE qa_step SET extracted_concept_ids = CAST(:ids AS json) "
+                    "UPDATE qa_step SET extracted_concept_ids = :ids "
                     "WHERE qa_id = :qid"
                 ), {"ids": ids_json, "qid": qa_id})
             else:
@@ -309,14 +312,23 @@ async def get_material_context_detail(material_id: str, query: str, max_chars: i
             break
         out.append(ch)
         total += len(ch)
+    # 相关性保底：最高分 chunk 超预算装不下时截断保留它（相关性优先），
+    # 而不是退化到材料开头（那是最高层概括内容，与下钻概念无关，
+    # 会把每层回答推向"对最高层内容的概括性解读"--同质化根因之一）
+    if not out and scored and scored[0][0] >= 1:
+        out.append(scored[0][2][:max_chars])
     # 准备度:命中段落数 / 总段落数。query 无有效关键词时退化为 0
     matched = sum(1 for sc, _, _ in scored if sc >= 1)
-    prep = (matched / len(chunks)) if (qterms and chunks) else 0.0
-    ctx_text = "\n\n".join(out) if out else plain[:max_chars]
-    snippets = out if out else [plain[:max_chars]]
+    # 零命中（或 query 无关键词）：不注入任何材料段落（context_text 为空），
+    # 让模型按概念链 + 问句回答，比塞无关的材料开头更好
+    if not out or not qterms:
+        return {"context_text": "", "snippets": [], "preparation": 0.0,
+                "total_chunks": len(chunks), "matched_chunks": matched}
+    prep = (matched / len(chunks)) if chunks else 0.0
+    ctx_text = "\n\n".join(out)
     return {
         "context_text": ctx_text,
-        "snippets": snippets,
+        "snippets": out,
         "preparation": round(prep, 3),
         "total_chunks": len(chunks),
         "matched_chunks": matched,

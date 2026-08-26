@@ -71,6 +71,14 @@ class InferenceClient:
         """注入学习材料相关段落，stream() 拼 prompt 时用，不污染 question 存库。"""
         self._material_context = ctx
 
+    def set_chain(self, chain) -> None:
+        """注入概念链（下钻路径），stream() 组 prompt 时填充概念链槽。
+
+        此前 chain 只在构造参数里且从未被调用方传入 -> 恒为空列表，
+        build_prompt 的概念链压缩槽形同虚设，L2+ 回答无路径上下文（同质化根因之一）。
+        """
+        self._chain = chain or []
+
     async def abort(self) -> None:
         self._aborted = True
         await self.backend.abort()

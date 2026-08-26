@@ -29,12 +29,12 @@ export function subscribeStream(qaId, handlers) {
   return es
 }
 
-// 出口1：点击概念下钻
-export async function drillDown(parentQaId, conceptId, question) {
+// 出口1：点击概念下钻（mode="ask" = 针对性提问，问题原样作子层，不走概念包装）
+export async function drillDown(parentQaId, conceptId, question, mode) {
   const res = await fetch(`${BASE}/qa/${parentQaId}/drilldown`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ concept_id: conceptId, question }),
+    body: JSON.stringify({ concept_id: conceptId, question, mode }),
   })
   if (!res.ok) throw new Error(`drilldown failed: ${res.status}`)
   return res.json()

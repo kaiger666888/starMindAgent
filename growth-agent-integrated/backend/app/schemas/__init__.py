@@ -51,9 +51,13 @@ class QAStepOut(BaseModel):
 
 
 class DriftDownRequest(BaseModel):
-    """点击概念下钻：fork 新 QAStep，挂 parent_qa_id。"""
+    """点击概念下钻：fork 新 QAStep，挂 parent_qa_id。
+
+    mode="ask"：针对性提问（问题直接作子层问题，不走概念名展开包装）。
+    """
     concept_id: str
     question: Optional[str] = None  # 不给则用概念 canonical_name 作为问题
+    mode: Optional[str] = None      # "ask" = 用户自由提问，跳过概念包装
 
 
 class RollbackRequest(BaseModel):
