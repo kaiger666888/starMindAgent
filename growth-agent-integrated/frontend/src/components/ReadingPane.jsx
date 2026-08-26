@@ -306,7 +306,7 @@ function ReadingLayer({ layer, depth, inflight, canBack, canForward, historyIdx,
             <InlineAnswer answer={layer.answer} concepts={concepts} layer={layer} inflight={inflight} />
           ) : (
             <div style={styles.generating}>
-              {layer.loading ? '正在落笔…' : '（空回答）'}
+              {layer.loading ? <WaitingHint /> : '（空回答）'}
             </div>
           )}
         </article>
@@ -390,6 +390,24 @@ function ContextBlock({ context }) {
 }
 
 // —— 内联回答:markdown 渲染正文,概念位置渲染为可点击的内联 chip ——
+// -- 等待提示:分阶段文案 --
+// 实测网关 TTFT 16-38s(排队主导),恒显"正在落笔…"会让用户在长等待里
+// 失去耐心。8s 前是正常落笔节奏;8s 后坦白"排队中"并说明原因,
+// 诚实的等待比虚假的"正在写"更能留人。
+function WaitingHint() {
+  const [stage, setStage] = useState(0)
+  useEffect(() => {
+    const id = setTimeout(() => setStage(1), 8000)
+    return () => clearTimeout(id)
+  }, [])
+  return (
+    <span style={styles.waitingRow}>
+      <span style={styles.waitingDot} aria-hidden="true" />
+      {stage === 0 ? '正在落笔…' : '推理排队中，网关高峰期可能稍慢，请稍候…'}
+    </span>
+  )
+}
+
 function InlineAnswer({ answer, concepts, layer, inflight }) {
   const [selection, setSelection] = useState(null)
   const articleRef = useRef(null)
@@ -775,6 +793,14 @@ const styles = {
     textRendering: 'optimizeLegibility', WebkitFontSmoothing: 'antialiased',
   },
   articleInner: { position: 'relative', wordBreak: 'break-word' },
+  // 等待提示行:呼吸点 + 文案
+  waitingRow: {
+    display: 'inline-flex', alignItems: 'center', gap: 8,
+  },
+  waitingDot: {
+    width: 6, height: 6, borderRadius: '50%', background: 'var(--active)',
+    animation: 'pulse 1.4s ease-in-out infinite', flexShrink: 0,
+  },
   generating: { color: 'var(--ink-soft)', fontStyle: 'italic', fontFamily: 'var(--serif)', fontSize: 'var(--fs-body)' },
   inline: {
     fontWeight: 500, position: 'relative',

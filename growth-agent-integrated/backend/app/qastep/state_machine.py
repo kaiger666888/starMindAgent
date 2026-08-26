@@ -222,11 +222,11 @@ class QAStepPipeline:
                 await self.repo.link_co_occurrence(self.qa_id, self.session_id, concepts_out)
                 yield {"type": "concepts", "concepts": concepts_out}
 
-        # —— 层摘要：在概念列表之上生成"这层你理解了什么"，作树节点折叠预览 ——
-        layer_summary = await self._gen_layer_summary("".join(answer_buf), concepts_out)
-        if layer_summary:
-            await self.repo.update_layer_summary(self.qa_id, layer_summary)
-            yield {"type": "layer_summary", "layer_summary": layer_summary}
+        # -- 层摘要：后台异步生成（不阻塞 done）--
+        # 实测层摘要是又一次完整 LLM 往返（TTFT ~10-25s），串行等待让用户
+        # 从提问到 done 多等近一倍时间，而树节点折叠预览并非当下必需。
+        # 后台完成后落库；用户切层/恢复会话时读 DB 可见。
+        self._spawn_layer_summary_bg("".join(answer_buf), concepts_out)
 
         # 埋点字段落盘（评测依赖）
         await self.repo.persist_telemetry(
@@ -262,6 +262,30 @@ class QAStepPipeline:
         await self.repo.transition(self.qa_id, QAStatus.WAITING)
         yield {"type": "status", "status": QAStatus.WAITING.value}
         yield {"type": "done", "qa_id": self.qa_id}
+
+    def _spawn_layer_summary_bg(self, answer_text: str, concepts: list[dict]) -> None:
+        """后台生成层摘要：create_task 派发，异常只记日志（不打断主流程）。
+
+        done 事件不等它；完成后落库（树节点预览在下次进入该层/恢复会话时可见）。
+        引用保存在实例上防 GC；同 qa 重跑时旧任务自然作废（reset_answer 后
+        生成的新摘要覆盖旧值）。
+        """
+        import asyncio
+
+        async def _bg() -> None:
+            try:
+                summary = await self._gen_layer_summary(answer_text, concepts)
+                if summary:
+                    await self.repo.update_layer_summary(self.qa_id, summary)
+                    log.info("layer summary (bg) saved qa_id=%s len=%d",
+                             self.qa_id, len(summary))
+            except Exception as e:  # noqa: BLE001  后台任务，失败不影响主链路
+                log.warning("layer summary (bg) failed qa_id=%s: %r", self.qa_id, e)
+
+        try:
+            self._layer_summary_task = asyncio.create_task(_bg())
+        except RuntimeError:  # 无事件循环（测试/同步上下文）：退化为同步跳过
+            log.info("no loop, skip bg layer summary qa_id=%s", self.qa_id)
 
     async def _gen_layer_summary(self, answer_text: str, concepts: list[dict]) -> str | None:
         """生成"这层你理解了什么"层摘要（≤60字），作树节点折叠预览。"""

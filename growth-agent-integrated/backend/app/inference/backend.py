@@ -262,10 +262,11 @@ class AnthropicBackend:
         #   thinking budget_tokens=N   -> 思考被卡在 N 内
         # 故默认 disabled（探索问答/抽取不需要深度思考）；LLM_THINKING=enabled
         # 时带 budget_tokens 护栏（防思考无限膨胀拉高内存）。
-        # max_tokens 默认 8000 即可（disabled thinking 后正文+sentinel JSON
-        # 6K 足够），不再为 thinking 无限加预算。
+        # max_tokens 默认 2000：正文限 500 字 + sentinel JSON，2K 绰绰有余。
+        # 8K 预算只会推高网关内存峰值（OOM 1210 风险）不产生额外价值。
+        # 长 prompt 场景（材料精判）由调用方显式覆盖（complete_text max_tokens）。
         if max_tokens is None:
-            max_tokens = int(os.getenv("LLM_MAX_TOKENS", "8000"))
+            max_tokens = int(os.getenv("LLM_MAX_TOKENS", "2000"))
         system = ""
         user_msgs = []
         for m in messages:
