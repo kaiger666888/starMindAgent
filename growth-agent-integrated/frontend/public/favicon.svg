@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- 「伴你成长」标签标识：暖纸底 + 生长茎（签名元素）
+       茎=墨黑(结构) · 右上叶+顶芽=墨蓝(活跃/当前生长点) · 左下叶=陶土棕(沉淀/已理解) -->
+  <rect width="32" height="32" rx="6" fill="#FAF8F3"/>
+  <rect x="0.75" y="0.75" width="30.5" height="30.5" rx="5.5" fill="none" stroke="#D9D2C5" stroke-width="1"/>
+  <path d="M16 27 C 15.2 22, 16.8 18, 16 10.5"
+        stroke="#1F2421" stroke-width="2.4" fill="none" stroke-linecap="round"/>
+  <!-- 左叶 · 陶土棕（沉淀） -->
+  <path d="M16 21 C 12.5 20.5, 9.5 18.5, 9 14.5 C 13 14.5, 15.5 17.5, 16 21 Z" fill="#8B5A3C"/>
+  <!-- 右叶 · 墨蓝（活跃） -->
+  <path d="M16 16.5 C 19.5 16, 22.5 14, 23 10 C 19 10, 16.5 13, 16 16.5 Z" fill="#2B5F8A"/>
+  <!-- 顶芽 · 生长点 -->
+  <circle cx="16" cy="8" r="2.4" fill="#2B5F8A"/>
+</svg>
