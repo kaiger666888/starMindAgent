@@ -434,7 +434,9 @@ function InlineAnswer({ answer, concepts, layer, inflight }) {
     const sel = window.getSelection()
     if (!sel || sel.isCollapsed) { setSelection(null); return }
     const text = sel.toString().trim()
-    if (text.length < 2 || text.length > 20) { setSelection(null); return }
+    // 上限 120：长选段是"就选段提问"的典型场景（如整句技术表述）。
+    // "标为概念"按钮另行按 ≤20 渲染——概念是短名词短语，长句不当概念。
+    if (text.length < 2 || text.length > 120) { setSelection(null); return }
     const range = sel.getRangeAt(0)
     const rect = range.getBoundingClientRect()
     const articleRect = articleRef.current?.getBoundingClientRect()
@@ -493,14 +495,16 @@ function InlineAnswer({ answer, concepts, layer, inflight }) {
       {renderMarkdown(displayAnswer, concepts, renderConcept)}
       {selection && (
         <div style={{ ...styles.popover, left: selection.x, top: selection.y }}>
-          <button style={styles.popoverBtn} onClick={() => onCreateAndDrill(selection.text)}>
-            标为概念·下钻
-          </button>
+          {selection.text.length <= 20 && (
+            <button style={styles.popoverBtn} onClick={() => onCreateAndDrill(selection.text)}>
+              标为概念·下钻
+            </button>
+          )}
           <button
             style={{ ...styles.popoverBtn, ...styles.popoverBtnAsk }}
             onClick={() => {
               window.dispatchEvent(new CustomEvent('starmind:askSelection', {
-                detail: { kind: 'selection', text: selection.text, label: '就选段追问' },
+                detail: { kind: 'selection', text: selection.text, label: selection.text.length <= 20 ? '就选段追问' : '就长选段追问' },
               }))
               setSelection(null)
               window.getSelection()?.removeAllRanges()
