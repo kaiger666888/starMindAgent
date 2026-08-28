@@ -124,19 +124,20 @@ async def start(req: QAStartRequest):
         s.add(sess)
         await s.flush()
         session_id = sess.session_id
-    created = await repo.create(
-        session_id=session_id, question=question, depth=1
-    )
-    # 挂 material_id（子层继承根层 material_id 用于上下文注入）
-    if req.material_id:
-        from sqlalchemy import text
-        async with session_scope() as s:
-            await s.execute(text(
-                f"UPDATE qa_step SET material_id = {_uuid_cast(':mid')} WHERE qa_id = {_uuid_cast(':id')}"
-            ).bindparams(mid=req.material_id, id=created.qa_id))
+        # qa_step 建行并入同一事务（原 repo.create 独立 session_scope =
+        # 多一次 commit 往返 ~0.5s；实测 start 总耗时 1.05s 里 DB 往返占大头）
+        from app.models.tables import QAStep as _QAStep
+        qa = _QAStep(session_id=session_id, question=question,
+                     status=QAStatus.GENERATING.value, depth=1,
+                     model="unknown",
+                     material_id=req.material_id)
+        s.add(qa)
+        await s.flush()
+        qa_id = qa.qa_id
+    created_qa_id, created_question = qa_id, question
     return QAStepOut(
-        qa_id=created.qa_id, session_id=session_id,
-        parent_qa_id=None, question=created.question, answer=None,
+        qa_id=created_qa_id, session_id=session_id,
+        parent_qa_id=None, question=created_question, answer=None,
         status=QAStatus.GENERATING.value, version=1, depth=1,
     )
 

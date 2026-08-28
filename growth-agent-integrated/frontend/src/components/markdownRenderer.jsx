@@ -9,6 +9,54 @@
 // 与 ReadingPane.buildInlineSegments 协同:概念匹配逻辑复用,保证下钻不丢。
 
 import React from 'react'
+import katex from 'katex'
+import 'katex/dist/katex.min.css'
+
+// -- LaTeX 公式渲染（KaTeX）--
+// LLM 讲 ML 概念常吐 $Softmax(QK^T/\sqrt{d})V$ 这类公式,无公式支持时
+// 原始 LaTeX 字面裸奔(\sqrt ^ {} 直显)且公式内 ** 会被误吃成粗体。
+// 块级 $$...$$ 展示模式,内联 $...$ 行内模式。
+// 误判防护:内联 $...$ 内必须含 LaTeX 特征字符(^ \ { } _ =)才按公式
+// 渲染,否则是金额($100)按普通文本;未闭合 $ 也按文本(流式半截公式)。
+
+const LATEX_HINT = /[\^{}_=]/  // 判定"这像 LaTeX"的特征字符
+
+function renderKatex(tex, displayMode) {
+  try {
+    const html = katex.renderToString(tex, {
+      displayMode, throwOnError: false,
+      strict: 'ignore', trust: false,
+    })
+    return <span style={displayMode ? mdStyles.formulaBlock : mdStyles.formulaInline}
+      dangerouslySetInnerHTML={{ __html: html }} />
+  } catch {
+    // 解析失败(流式半截公式等):显示原文,等后续 token 到达再重渲染
+    return <span style={mdStyles.formulaRaw}>{tex}</span>
+  }
+}
+
+// 提取行内 $...$ 段:返回 [{type:'tex', tex} | {type:'text', text}]
+function splitInlineMath(text) {
+  const out = []
+  let pos = 0
+  while (pos < text.length) {
+    const d = text.indexOf('$', pos)
+    if (d < 0) break
+    const close = text.indexOf('$', d + 1)
+    if (close < 0) break  // 未闭合(流式中):剩余全部按文本
+    const inner = text.slice(d + 1, close)
+    // 误判防护:空串或无 LaTeX 特征字符(如金额 $100)不按公式
+    if (inner && LATEX_HINT.test(inner)) {
+      if (d > pos) out.push({ type: 'text', text: text.slice(pos, d) })
+      out.push({ type: 'tex', tex: inner })
+      pos = close + 1
+      continue
+    }
+    pos = d + 1  // 不是公式,$ 按普通文本跳过
+  }
+  if (pos < text.length) out.push({ type: 'text', text: text.slice(pos) })
+  return out
+}
 
 // —— 把一段文本按概念首次出现位置切分(与 ReadingPane 同逻辑) ——
 function splitByConcepts(text, concepts) {
@@ -53,13 +101,21 @@ function parseInline(text, concepts, renderConcept, keyBase) {
   let k = 0
   const pushText = (t) => {
     if (!t) return
-    // 这段文本再按概念切分
-    const segs = splitByConcepts(t, concepts)
-    for (const seg of segs) {
-      if (seg.type === 'text') {
-        nodes.push(<React.Fragment key={`${keyBase}-t${k++}`}>{seg.text}</React.Fragment>)
-      } else {
-        nodes.push(<React.Fragment key={`${keyBase}-c${k++}`}>{renderConcept(seg.concept)}</React.Fragment>)
+    // 先按 $...$ 切公式(公式内不做概念切分,概念名不在公式里):
+    // $Softmax(QK^T/\sqrt{d})V$ 类内容必须整体交给 KaTeX
+    for (const mseg of splitInlineMath(t)) {
+      if (mseg.type === 'tex') {
+        nodes.push(<React.Fragment key={`${keyBase}-x${k++}`}>{renderKatex(mseg.tex, false)}</React.Fragment>)
+        continue
+      }
+      // 非公式文本再按概念切分
+      const segs = splitByConcepts(mseg.text, concepts)
+      for (const seg of segs) {
+        if (seg.type === 'text') {
+          nodes.push(<React.Fragment key={`${keyBase}-t${k++}`}>{seg.text}</React.Fragment>)
+        } else {
+          nodes.push(<React.Fragment key={`${keyBase}-c${k++}`}>{renderConcept(seg.concept)}</React.Fragment>)
+        }
       }
     }
   }
@@ -122,6 +178,26 @@ export function renderMarkdown(answer, concepts = [], renderConcept = () => null
 
   while (i < lines.length) {
     const line = lines[i]
+
+    // 块级公式 $$...$$（展示模式，居中排版）
+    // 支持三种形态：单行 $$..$$、$$ 独占一行开 + 多行 + $$ 独占行闭
+    if (line.trimStart().startsWith('$$')) {
+      const single = line.trim().match(/^\$\$(.+)\$\$$/)
+      if (single) {
+        blocks.push(<div key={key++} style={mdStyles.formulaWrap}>{renderKatex(single[1], true)}</div>)
+        i++
+        continue
+      }
+      // 多行块公式：$$ 开行，收集到闭合 $$ 行
+      const tex = []
+      i++
+      while (i < lines.length && !lines[i].trimStart().startsWith('$$')) {
+        tex.push(lines[i]); i++
+      }
+      i++ // 跳过闭合 $$
+      blocks.push(<div key={key++} style={mdStyles.formulaWrap}>{renderKatex(tex.join('\n'), true)}</div>)
+      continue
+    }
 
     // 围栏代码块 ```
     if (line.trimStart().startsWith('```')) {
@@ -247,6 +323,7 @@ export function renderMarkdown(answer, concepts = [], renderConcept = () => null
     while (i < lines.length && lines[i].trim() !== '' &&
       !/^(#{1,3})\s/.test(lines[i]) &&
       !lines[i].trimStart().startsWith('```') &&
+      !lines[i].trimStart().startsWith('$$') &&
       !lines[i].trimStart().startsWith('>') &&
       !/^\s*[-*+]\s+/.test(lines[i]) &&
       !/^\s*\d+\.\s+/.test(lines[i]) &&
@@ -360,6 +437,16 @@ const mdStyles = {
   },
   td: {
     padding: '7px 12px', borderBottom: '1px solid var(--rule-soft)', color: 'var(--ink-read)',
+  },
+  // 公式:块级居中留白,内联随文,raw 是解析失败的原文回退
+  formulaWrap: {
+    margin: '6px 0 18px', textAlign: 'center', overflowX: 'auto',
+    padding: '4px 0',
+  },
+  formulaInline: { display: 'inline-block', verticalAlign: 'baseline' },
+  formulaRaw: {
+    fontFamily: 'var(--mono)', fontSize: '0.9em', color: 'var(--ink-soft)',
+    background: 'var(--code-bg)', padding: '1px 5px', borderRadius: 'var(--r-sm)',
   },
   // 分隔线 ---
   hr: {

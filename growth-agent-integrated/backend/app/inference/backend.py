@@ -19,6 +19,26 @@ from app.schemas import ConceptBlock, ConceptItem
 log = logging.getLogger(__name__)
 
 
+_shared_http = None
+
+
+def _shared_client():
+    """进程级 httpx.AsyncClient（连接池保活）。
+
+    每请求新建 AsyncClient 要付 TCP+TLS 握手（https 网关 ~0.3s）；
+    共享 client 复用连接，同端点后续请求免握手。timeout 逐调用覆盖
+    （httpx 请求级 timeout 优先于 client 级），这里 client 级不设。
+    uvicorn 单事件循环，跨协程共享安全。
+    """
+    global _shared_http
+    if _shared_http is None:
+        import httpx
+        _shared_http = httpx.AsyncClient(
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+        )
+    return _shared_http
+
+
 class _GatewayOverload(Exception):
     """网关过载/OOM（5xx、Error code 1210、Out of Memory）：可退避重试。"""
 
@@ -134,6 +154,9 @@ class OpenAICompatibleBackend:
         self.backup_model = os.getenv("LLM_BACKUP_MODEL", self.model)
         self.endpoint = f"{self.base_url}/chat/completions"
         self._aborted = False
+        # 长连接复用：模块级 client 池（每请求新建 AsyncClient 要付 TCP+TLS
+        # 握手 ~0.3s；连接池保活后同端点请求免握手，TTFT 直接受益）
+        self._http = _shared_client()
         # 思考模型（如 glm-5.2）默认关闭思考以避免 30-50s 首 token 延迟
         # 设 LLM_THINKING=enabled 可恢复思考（深度优先）
         self.thinking_enabled = os.getenv("LLM_THINKING", "disabled").lower() in ("1", "true", "enabled", "on")
@@ -154,10 +177,10 @@ class OpenAICompatibleBackend:
         messages = [{"role": "system", "content": self._concept_system()},
             {"role": "user", "content": prompt}]
         payload = self._payload(messages, stream=True)
-        async with httpx.AsyncClient(timeout=settings.inference_timeout_s) as client:
-            async with client.stream("POST", self.endpoint,
+        async with self._http.stream("POST", self.endpoint,
                 headers={"Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json"}, json=payload) as resp:
+                "Content-Type": "application/json"}, json=payload,
+                timeout=settings.inference_timeout_s) as resp:
                 async for line in resp.aiter_lines():
                     if self._aborted:
                         break
@@ -174,10 +197,10 @@ class OpenAICompatibleBackend:
         messages = [{"role": "system", "content": "从正文抽取概念，只输出 ConceptBlock JSON。"},
             {"role": "user", "content": answer_text}]
         payload = self._payload(messages, stream=False)
-        async with httpx.AsyncClient(timeout=settings.json_parse_timeout_s) as c:
-            r = await c.post(self.endpoint, headers={"Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json"}, json=payload)
-            data = r.json()
+        r = await self._http.post(self.endpoint, headers={"Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"}, json=payload,
+            timeout=settings.json_parse_timeout_s)
+        data = r.json()
         from app.inference.constraints import parse_concept_block
         block = parse_concept_block(data["choices"][0]["message"]["content"])
         if block is None:
@@ -191,11 +214,10 @@ class OpenAICompatibleBackend:
             [{"role": "system", "content": system}, {"role": "user", "content": user}],
             stream=False,
         )
-        async with httpx.AsyncClient(timeout=timeout) as c:
-            r = await c.post(self.endpoint,
-                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-                json=payload)
-            data = r.json()
+        r = await self._http.post(self.endpoint,
+            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+            json=payload, timeout=timeout)
+        data = r.json()
         return data["choices"][0]["message"].get("content") or ""
 
     async def abort(self) -> None:
@@ -209,6 +231,15 @@ def default_backend() -> LLMBackend:
     - 否则 StubLLMBackend
     """
     backend_kind = os.getenv("LLM_BACKEND", "").lower()
+    # LLM_BACKEND=openai 显式路由（最高优先）：Anthropic 全局环境变量存在时
+    # 切到 OpenAI 协议网关（higress /v1/chat/completions，thinking 可关、
+    # TTFT ~2s，实测 2026-08-27 比 ai-nexus 的 Anthropic 通道快一个量级）
+    if backend_kind == "openai":
+        try:
+            return OpenAICompatibleBackend()
+        except Exception as e:  # 配置异常不阻塞，退化 stub
+            log.warning("OpenAI backend init failed (%s), fallback to stub", e)
+            return StubLLMBackend()
     if backend_kind == "anthropic" or os.getenv("ANTHROPIC_BASE_URL"):
         try:
             return AnthropicBackend()
