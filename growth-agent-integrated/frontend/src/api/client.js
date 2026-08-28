@@ -142,6 +142,13 @@ export async function getSessionDetail(sessionId) {
   return res.json()
 }
 
+// 删除一次学习足迹（探索树步骤 + 概念图边级联；材料/概念节点保留）
+export async function deleteSession(sessionId) {
+  const res = await fetch(`${BASE}/memory/sessions/${sessionId}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`delete session failed: ${res.status}`)
+  return res.json()
+}
+
 // 恢复会话:并发取 session 详情(steps) + 概念图(概念详情),
 // 合并成 { session_id, steps, conceptsById } 供 store 重建探索树。
 // steps 只含 extracted_concept_ids,概念名/别名/explore_count 需从 graph 补全。

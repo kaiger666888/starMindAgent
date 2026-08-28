@@ -1,10 +1,11 @@
 """学习记忆路由：历史会话 + 学习画像 + 推荐。
 
-  GET  /memory/users/{user_id}/sessions           列出用户会话
-  GET  /memory/sessions/{session_id}               会话详情(完整 QA 步骤树)
-  GET  /memory/sessions/{session_id}/export       结构化导出(md 手账/json 备份)
-  GET  /memory/users/{user_id}/profile             读学习画像(stale 标志)
-  POST /memory/users/{user_id}/profile/refresh     触发 LLM 重新总结画像
+  GET    /memory/users/{user_id}/sessions           列出用户会话
+  GET    /memory/sessions/{session_id}               会话详情(完整 QA 步骤树)
+  GET    /memory/sessions/{session_id}/export       结构化导出(md 手账/json 备份)
+  DELETE /memory/sessions/{session_id}               删除会话足迹(steps/edges 级联)
+  GET    /memory/users/{user_id}/profile             读学习画像(stale 标志)
+  POST   /memory/users/{user_id}/profile/refresh     触发 LLM 重新总结画像
 """
 from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
@@ -49,6 +50,15 @@ async def session_export(
             "Content-Disposition": f"attachment; filename*=UTF-8''{quoted}",
         },
     )
+
+
+@router.delete("/sessions/{session_id}")
+async def delete_session(session_id: str):
+    """删除一次学习足迹（探索树步骤 + 概念图边）。材料与概念节点保留。"""
+    out = await service.delete_session(session_id)
+    if out is None:
+        raise HTTPException(status_code=404, detail=f"session {session_id} not found")
+    return {"deleted": out}
 
 
 @router.get("/users/{user_id}/profile", response_model=ProfileResponse)

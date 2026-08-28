@@ -14,12 +14,12 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
-from sqlalchemy import select, func, insert, update
+from sqlalchemy import select, func, insert, update, delete
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.db import session_scope
 from app.models.tables import (
-    QASession, QAStep, AppUser, UserProfile, ConceptNode,
+    QASession, QAStep, AppUser, UserProfile, ConceptNode, ConceptEdge, LearningMaterial,
 )
 
 log = logging.getLogger(__name__)
@@ -139,6 +139,29 @@ async def get_session_detail(session_id: str) -> dict:
                 for r in steps
             ],
         }
+
+
+async def delete_session(session_id: str) -> str | None:
+    """删除一次学习的全部痕迹。
+
+    qa_step/audit_log 走 qa_session 的 CASCADE；
+    concept_edge.session_id 无外键（纯 UUID 列），需手动清；
+    导入材料本身保留（它是可复用资产，删足迹≠删材料）。
+    返回删除的 session_id；不存在返回 None。
+    """
+    async with session_scope() as s:
+        sess = (
+            await s.execute(
+                select(QASession).where(QASession.session_id == session_id)
+            )
+        ).scalar_one_or_none()
+        if sess is None:
+            return None
+        await s.execute(
+            delete(ConceptEdge).where(ConceptEdge.session_id == session_id)
+        )
+        await s.delete(sess)  # qa_step/audit_log 级联
+        return str(session_id)
 
 
 async def _collect_user_qa(user_id: str, limit: int = 80) -> list[dict]:

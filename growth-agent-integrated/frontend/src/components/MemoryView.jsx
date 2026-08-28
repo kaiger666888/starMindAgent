@@ -128,6 +128,7 @@ export default function MemoryView() {
                 idx={idx}
                 expanded={expanded === sess.session_id}
                 onToggle={() => setExpanded(expanded === sess.session_id ? null : sess.session_id)}
+                onDeleted={() => setSessions((prev) => prev.filter((x) => x.session_id !== sess.session_id))}
               />
             ))}
           </ol>
@@ -214,12 +215,14 @@ function ConceptCol({ title, items, tone }) {
   )
 }
 
-function SessionItem({ sess, idx, expanded, onToggle }) {
+function SessionItem({ sess, idx, expanded, onToggle, onDeleted }) {
   const [detail, setDetail] = useState(null)
   const [loadingD, setLoadingD] = useState(false)
   const [resuming, setResuming] = useState(false)
   const [resumeErr, setResumeErr] = useState(null)
   const [exporting, setExporting] = useState(false)
+  const [confirmingDel, setConfirmingDel] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   async function loadDetail() {
     if (detail) return
     setLoadingD(true)
@@ -263,6 +266,21 @@ function SessionItem({ sess, idx, expanded, onToggle }) {
     }
   }
 
+  // 删除足迹：两段式确认（点一次变"确认删除"再点才删），防误触
+  async function onDelete() {
+    if (!confirmingDel) { setConfirmingDel(true); return }
+    setDeleting(true)
+    try {
+      await api.deleteSession(sess.session_id)
+      onDeleted()
+    } catch (e) {
+      console.error('[onDelete] 删除失败:', e)
+      setConfirmingDel(false)
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   const isImported = sess.domain_tag === 'imported'
 
   // 导入文件:卷宗式折叠——标题做主标,展开只显摘要+入口,不铺全文
@@ -288,6 +306,14 @@ function SessionItem({ sess, idx, expanded, onToggle }) {
                 onResume={onResume}
                 onExport={onExport}
                 exporting={exporting}
+                deleteBtn={(
+                  <DeleteBtn
+                    confirming={confirmingDel}
+                    deleting={deleting}
+                    onClick={onDelete}
+                    onReset={() => setConfirmingDel(false)}
+                  />
+                )}
               />
             ) : (
               <div style={s.empty}>无步骤数据</div>
@@ -329,6 +355,12 @@ function SessionItem({ sess, idx, expanded, onToggle }) {
                 <button style={s.exportBtn} onClick={onExport} disabled={exporting}>
                   {exporting ? '导出中…' : '导出手账'}
                 </button>
+                <DeleteBtn
+                  confirming={confirmingDel}
+                  deleting={deleting}
+                  onClick={onDelete}
+                  onReset={() => setConfirmingDel(false)}
+                />
                 {resumeErr && <span style={s.resumeErr}>{resumeErr}</span>}
               </div>
             </>
@@ -342,7 +374,7 @@ function SessionItem({ sess, idx, expanded, onToggle }) {
 }
 
 // 导入文件展开详情:元信息条 + content_plain 摘要(不铺全文) + 子层探索索引
-function ImportedDetail({ detail, resuming, resumeErr, onResume, onExport, exporting }) {
+function ImportedDetail({ detail, resuming, resumeErr, onResume, onExport, exporting, deleteBtn }) {
   const steps = detail.steps || []
   const root = steps[0]  // L0 = 导入根层, question=文件名, answer=content_plain
   // 下钻出来的子层:用结构过滤(parent_qa_id 非空)而非 depth。
@@ -406,9 +438,34 @@ function ImportedDetail({ detail, resuming, resumeErr, onResume, onExport, expor
         <button style={s.exportBtn} onClick={onExport} disabled={exporting}>
           {exporting ? '导出中…' : '导出手账'}
         </button>
+        {deleteBtn}
         {resumeErr && <span style={s.resumeErr}>{resumeErr}</span>}
       </div>
     </div>
+  )
+}
+
+// 删除足迹按钮：两段式确认。第一次点变红色"确认删除"，
+// 3s 未再点自动弹回；再点才真正调 DELETE。
+function DeleteBtn({ confirming, deleting, onClick, onReset }) {
+  useEffect(() => {
+    if (!confirming) return
+    const id = setTimeout(onReset, 3000)
+    return () => clearTimeout(id)
+  }, [confirming])
+  const style = confirming ? {
+    ...s.deleteBtn,
+    background: 'var(--danger)', color: 'var(--paper)', borderColor: 'var(--danger)',
+  } : s.deleteBtn
+  return (
+    <button
+      style={style}
+      onClick={onClick}
+      disabled={deleting}
+      title={confirming ? '再点一次确认删除' : '删除这条学习足迹'}
+    >
+      {deleting ? '删除中…' : (confirming ? '确认删除' : '删除')}
+    </button>
   )
 }
 
@@ -570,6 +627,13 @@ const s = {
     cursor: 'pointer', transition: 'opacity 0.15s', letterSpacing: '0.02em',
   },
   resumeErr: { fontSize: 11, color: 'var(--danger)', fontFamily: 'var(--mono)' },
+  // 删除足迹按钮:危险动作,默认幽灵态(danger 描边极淡),确认态实心红
+  deleteBtn: {
+    marginLeft: 'auto', padding: '7px 14px', fontSize: 12, fontFamily: 'var(--sans)',
+    color: 'var(--danger)', background: 'transparent',
+    border: '1px solid var(--danger-soft)', borderRadius: 'var(--r-sm)',
+    cursor: 'pointer', opacity: 0.75, letterSpacing: '0.02em',
+  },
   // 导出手账按钮:同族次级(描边轻、透明底),导出是带走动作不是主流程
   exportBtn: {
     padding: '7px 16px', fontSize: 13, fontFamily: 'var(--serif)',
