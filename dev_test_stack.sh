@@ -52,8 +52,11 @@ else
   log "测试库表结构已就绪，跳过迁移"
 fi
 
+# 端口占用检查：必须词边界匹配（":5266.*" 会误命中 :5266xx 这类长端口）
+listening() { netstat -ano | grep "LISTENING" | grep -qE "[:.]$1\b"; }
+
 # -- 3. 测试后端 :8100（测试库；带 --reload，改代码自动重启不影响生产） --
-if netstat -ano | grep -q ":$BACKEND_PORT.*LISTENING"; then
+if listening $BACKEND_PORT; then
   log "测试后端 :$BACKEND_PORT 已在监听，跳过"
 else
   export LLM_BACKEND=openai
@@ -69,7 +72,7 @@ else
 fi
 
 # -- 4. 测试前端 :5266（proxy -> :8100） --
-if netstat -ano | grep -q ":$FRONTEND_PORT.*LISTENING"; then
+if listening $FRONTEND_PORT; then
   log "测试前端 :$FRONTEND_PORT 已在监听，跳过"
 else
   cd "$ROOT/growth-agent-integrated/frontend"

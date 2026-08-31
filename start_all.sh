@@ -23,8 +23,11 @@ for i in $(seq 1 12); do
   sleep 10
 done
 
+# 端口占用检查：必须词边界匹配（":8000.*" 会误命中 :80001 这类长端口）
+listening() { netstat -ano | grep "LISTENING" | grep -qE "[:.]$1\b"; }
+
 # -- 2. 后端 :8000 --
-if netstat -ano | grep -q ":8000.*LISTENING"; then
+if listening 8000; then
   log "后端 :8000 已在监听，跳过"
 else
   # LLM 网关选择固化（与 start_backend.sh 一致）：higress openai 兼容
@@ -39,7 +42,7 @@ else
 fi
 
 # -- 3. 前端 :5166 --
-if netstat -ano | grep -q ":5166.*LISTENING"; then
+if listening 5166; then
   log "前端 :5166 已在监听，跳过"
 else
   cd "$ROOT/growth-agent-integrated/frontend"
