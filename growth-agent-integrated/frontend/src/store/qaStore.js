@@ -165,6 +165,7 @@ export function restoreSession(sessionId, steps, conceptsById) {
       depth: st.depth || 1,
       concepts: uniq,
       layer_summary: st.layer_summary || '',
+      checked: !!st.checked,
       loading: false,
       children: [],
     }
@@ -201,9 +202,12 @@ export function restoreSession(sessionId, steps, conceptsById) {
     tree: rootNode,
     currentPath: deepest.path,
     inflight: null,
-    // 浏览历史重置为这条根→当前层的路径,指针指末端
-    history: [...deepest.path],
-    historyIdx: deepest.path.length - 1,
+    // 浏览历史重置为这条根→当前层的路径,指针指末端。
+    // 深路径同样受 30 步滑动窗口约束(保留最近的 30 步)
+    history: deepest.path.length > MAX_HISTORY
+      ? deepest.path.slice(deepest.path.length - MAX_HISTORY)
+      : [...deepest.path],
+    historyIdx: Math.min(deepest.path.length, MAX_HISTORY) - 1,
   })
   return true
 }
@@ -214,6 +218,52 @@ export function updateLayer(qaId, patch) {
   if (node) {
     Object.assign(node, patch)
     emit()
+  }
+}
+
+// 勾选/取消勾选某层学习完成度：乐观更新本地节点，失败回滚并抛错
+export async function toggleChecked(qaId) {
+  const node = findNode(qaId)
+  if (!node) return
+  const prev = !!node.checked
+  const next = !prev
+  node.checked = next
+  emit()
+  try {
+    const { setChecked } = await import('../api/client')
+    await setChecked(qaId, next)
+  } catch (err) {
+    node.checked = prev
+    emit()
+    console.error('[toggleChecked] 失败:', err)
+  }
+}
+
+// 勾选/取消概念已理解:遍历树,patch 所有节点 concepts 里该概念的 understood
+// (乐观更新,失败回滚)。概念汇总、树层进度条都会即时反映。
+export async function toggleConceptUnderstood(conceptId) {
+  if (!state.tree || !conceptId) return
+  const touched = []
+  const walk = (node) => {
+    for (const c of (node.concepts || [])) {
+      if (c.concept_id === conceptId) {
+        touched.push({ concept: c, prev: !!c.understood })
+        c.understood = !c.understood
+      }
+    }
+    for (const child of (node.children || [])) walk(child)
+  }
+  walk(state.tree)
+  if (touched.length === 0) return
+  const next = touched[0].concept.understood
+  emit()
+  try {
+    const { setUnderstood } = await import('../api/client')
+    await setUnderstood(conceptId, next)
+  } catch (err) {
+    for (const t of touched) t.concept.understood = t.prev
+    emit()
+    console.error('[toggleConceptUnderstood] 失败:', err)
   }
 }
 
