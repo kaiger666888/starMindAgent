@@ -85,12 +85,14 @@ export default function ReaderControls() {
 }
 
 const styles = {
+  // static:由调用处置入固定顶栏(ReadingPane topBar),不随正文滚动卷走
   wrap: {
-    position: 'absolute', top: 18, right: 12, zIndex: 5,
+    position: 'static',
     display: 'flex', alignItems: 'center', gap: 8,
     padding: '4px 8px', borderRadius: 'var(--r-pill)',
     background: 'var(--paper)', border: '1px solid var(--rule-soft)',
     opacity: 0.45, transition: 'opacity 0.25s',
+    marginLeft: 'auto',
   },
   // hover 浮现:用 CSS :hover 不可行(内联),改用 group hover 兜底——这里靠 wrap 自身 opacity
   group: { display: 'flex', alignItems: 'center', gap: 3 },

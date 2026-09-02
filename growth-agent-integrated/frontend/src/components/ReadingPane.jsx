@@ -50,7 +50,7 @@ export default function ReadingPane() {
   if (!current) {
     return (
       <div style={styles.empty}>
-        <ReaderControls />
+        <div style={styles.emptyTools}><ReaderControls /></div>
         <div style={styles.emptyStem} aria-hidden="true" />
         <div style={styles.emptyTitle}>从一个问题开始</div>
         <div style={styles.emptyDesc}>
@@ -178,6 +178,7 @@ function ReadingLayer({ layer, depth, inflight, canBack, canForward, historyIdx,
         const prev = cur?.candidates || []
         updateLayer(childQaId, { candidates: [...prev, ...ev.concepts] })
       },
+      search_sources: (ev) => updateLayer(childQaId, { searchSources: ev.sources }),
       layer_summary: (ev) => updateLayer(childQaId, { layer_summary: ev.layer_summary }),
       done: () => { updateLayer(childQaId, { loading: false }); clearInflight() },
       error: () => { updateLayer(childQaId, { loading: false }); clearInflight() },
@@ -245,34 +246,37 @@ function ReadingLayer({ layer, depth, inflight, canBack, canForward, historyIdx,
           <span style={styles.toast}>已复制原文</span>
         </div>
       )}
-      <div style={styles.scrollWrap}>
+      {/* 固定顶栏:历史翻页器(不随正文滚动被卷走,始终可达) */}
+      <div style={styles.topBar}>
+        <span style={styles.topBarDepth}>第 {depth} 层</span>
+        <div style={styles.pager} aria-label="探索历史翻页">
+          <button
+            style={{ ...styles.pageBtn, ...(!canBack ? styles.pageBtnDisabled : {}) }}
+            onClick={goBack}
+            disabled={!canBack}
+            title={canBack ? '后退（Alt+←）' : '已是最早一页'}
+            aria-label="后退"
+          >‹</button>
+          <span style={styles.pageCount}>{historyIdx + 1} / {historyLen}</span>
+          <button
+            style={{ ...styles.pageBtn, ...(!canForward ? styles.pageBtnDisabled : {}) }}
+            onClick={goForward}
+            disabled={!canForward}
+            title={canForward ? '前进（Alt+→）' : '已是最新一页'}
+            aria-label="前进"
+          >›</button>
+        </div>
+        <span style={styles.topBarHint}>Alt+←/→ 翻页 · 最多记 30 步</span>
         <ReaderControls />
+      </div>
+      <div style={styles.scrollArea}>
+      <div style={styles.scrollWrap}>
         {/* 层标签 + 生长茎(签名元素) */}
         <header style={styles.layerHeader}>
           <div style={styles.stem} aria-hidden="true">
             <span style={styles.stemNode} />
           </div>
           <div style={styles.layerMeta}>
-            <span style={styles.depthTag}>第 {depth} 层</span>
-            {(canBack || canForward) && (
-              <div style={styles.pager} aria-label="探索历史翻页">
-                <button
-                  style={{ ...styles.pageBtn, ...(!canBack ? styles.pageBtnDisabled : {}) }}
-                  onClick={goBack}
-                  disabled={!canBack}
-                  title={canBack ? '后退' : '已是最早一页'}
-                  aria-label="后退"
-                >‹</button>
-                <span style={styles.pageCount}>{historyIdx + 1} / {historyLen}</span>
-                <button
-                  style={{ ...styles.pageBtn, ...(!canForward ? styles.pageBtnDisabled : {}) }}
-                  onClick={goForward}
-                  disabled={!canForward}
-                  title={canForward ? '前进' : '已是最新一页'}
-                  aria-label="前进"
-                >›</button>
-              </div>
-            )}
             <h1 style={styles.layerQ}>{layer.question}</h1>
             {layer.loading && <span style={styles.loadingDot} title="生成中" />}
             {layer.answer && (
@@ -319,6 +323,12 @@ function ReadingLayer({ layer, depth, inflight, canBack, canForward, historyIdx,
           </aside>
         )}
 
+        {/* 联网搜索来源:时效性回答的参考出处(墨蓝卷宗条目) */}
+        {layer.searchSources && layer.searchSources.length > 0 && (
+          <SearchSourcesBlock sources={layer.searchSources} />
+        )}
+
+
         {/* 未匹配的概念(抽取了但正文没出现)。
             仅权威列表到位后显示--流式期间 concepts 是树上已有概念的投影,
             大多不在本层正文,显示会造成满屏无关 chip */}
@@ -335,6 +345,7 @@ function ReadingLayer({ layer, depth, inflight, canBack, canForward, historyIdx,
 
         {/* 选中创建提示 —— 静默脚注,不抢正文 */}
         <div style={styles.hint}>选中正文可标为概念下钻，也可就选段或就这层提问</div>
+      </div>
       </div>
     </div>
   )
@@ -388,6 +399,41 @@ function ContextBlock({ context }) {
     </section>
   )
 }
+
+// -- 联网搜索来源:时效性回答的参考出处 --
+// 墨蓝色调(与相关材料的陶土棕区分:联网新知 vs 本地材料)
+function SearchSourcesBlock({ sources }) {
+  const [expanded, setExpanded] = useState(false)
+  const MAX_INITIAL = 3
+  const shown = expanded ? sources : sources.slice(0, MAX_INITIAL)
+  return (
+    <section style={styles.sourcesBlock} aria-label="联网搜索来源">
+      <div style={styles.sourcesHead}>
+        <span style={styles.sourcesLabel}>联网来源</span>
+        <span style={styles.sourcesMeta}>{sources.length} 条参考</span>
+      </div>
+      <div style={styles.sourcesBody}>
+        {shown.map((s, i) => (
+          <a key={i} style={styles.sourcesItem} href={s.url} target="_blank"
+             rel="noopener noreferrer" title={s.snippet}>
+            <span style={styles.sourcesTitle}>{s.title || s.url}</span>
+            <span style={styles.sourcesHost}>{hostOf(s.url)}</span>
+          </a>
+        ))}
+        {!expanded && sources.length > MAX_INITIAL && (
+          <button style={styles.sourcesToggle} onClick={() => setExpanded(true)}>
+            展开剩余 {sources.length - MAX_INITIAL} 条
+          </button>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function hostOf(url) {
+  try { return new URL(url).hostname.replace(/^www[.]/, '') } catch { return '' }
+}
+
 
 // —— 内联回答:markdown 渲染正文,概念位置渲染为可点击的内联 chip ——
 // -- 等待提示:分阶段文案 --
@@ -477,6 +523,7 @@ function InlineAnswer({ answer, concepts, layer, inflight }) {
           const prev = cur?.candidates || []
           updateLayer(child.qa_id, { candidates: [...prev, ...ev.concepts] })
         },
+        search_sources: (ev) => updateLayer(child.qa_id, { searchSources: ev.sources }),
         layer_summary: (ev) => updateLayer(child.qa_id, { layer_summary: ev.layer_summary }),
         done: () => { updateLayer(child.qa_id, { loading: false }); clearInflight() },
         error: () => { updateLayer(child.qa_id, { loading: false }); clearInflight() },
@@ -561,6 +608,7 @@ function ConceptInline({ concept, inflight, layer, inline }) {
           const prev = cur?.candidates || []
           updateLayer(child.qa_id, { candidates: [...prev, ...ev.concepts] })
         },
+        search_sources: (ev) => updateLayer(child.qa_id, { searchSources: ev.sources }),
         layer_summary: (ev) => updateLayer(child.qa_id, { layer_summary: ev.layer_summary }),
         done: () => { updateLayer(child.qa_id, { loading: false }); clearInflight() },
         error: () => { updateLayer(child.qa_id, { loading: false }); clearInflight() },
@@ -704,6 +752,7 @@ function buildInlineSegments(answer, concepts) {
     pos = m.end
   }
   if (pos < answer.length) segments.push({ type: 'text', text: answer.slice(pos) })
+
   // 未匹配的概念
   const matchedIds = new Set(valid.map((m) => m.concept.concept_id))
   const unmatched = concepts.filter((c) => !matchedIds.has(c.concept_id))
@@ -711,11 +760,30 @@ function buildInlineSegments(answer, concepts) {
 }
 
 const styles = {
-  wrap: { flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, background: 'var(--paper)', overflow: 'auto' },
+  // wrap 是列布局容器不滚动:顶栏固定 + 滚动下放 scrollArea
+  wrap: { flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, background: 'var(--paper)', overflow: 'hidden' },
+  // 固定顶栏:历史翻页器驻地,不随正文滚动,底部发丝线与阅读区分界
+  topBar: {
+    flexShrink: 0, display: 'flex', alignItems: 'center', gap: 14,
+    padding: '8px 36px', borderBottom: '1px solid var(--rule-soft)',
+    maxWidth: 748, width: '100%', margin: '0 auto',
+  },
+  topBarDepth: {
+    fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--active)',
+    background: 'var(--active-soft)', borderRadius: 'var(--r-sm)', padding: '2px 8px',
+    letterSpacing: '0.04em', flexShrink: 0,
+  },
+  topBarHint: {
+    marginLeft: 'auto', fontFamily: 'var(--mono)', fontSize: 10.5,
+    color: 'var(--ink-faint)', letterSpacing: '0.04em',
+  },
+  // 滚动区:承载正文(滚动条只属于这里)
+  scrollArea: { flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' },
   // 阅读区:max-width 680(中文长行 40-55 字舒适),上下加大呼吸
   scrollWrap: { maxWidth: 680, margin: '0 auto', padding: '32px 36px 56px', width: '100%', minHeight: '100%', position: 'relative' },
   // 空态:加一根短茎暗示"等一个问题落下"
   empty: { flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: 48, background: 'var(--paper)', gap: 14, position: 'relative' },
+  emptyTools: { position: 'absolute', top: 18, right: 36 },
   emptyStem: { width: 3, height: 28, borderRadius: 2, background: 'var(--rule)', marginBottom: 4 },
   emptyTitle: { fontFamily: 'var(--serif)', fontSize: 20, color: 'var(--ink)', fontWeight: 600, letterSpacing: '0.01em' },
   emptyDesc: { fontSize: 13.5, color: 'var(--ink-soft)', lineHeight: 1.75, textAlign: 'center', maxWidth: 380, fontFamily: 'var(--serif)' },
@@ -738,11 +806,11 @@ const styles = {
     background: 'var(--active-soft)', borderRadius: 'var(--r-sm)', padding: '2px 8px',
     letterSpacing: '0.04em', flexShrink: 0,
   },
-  // 翻页器:学习手账的"翻页"隐喻——前进/后退切层,中间页码指示进度
+  // 翻页器（顶栏版）:浅纸底凹槽感,呼吸融入顶栏
   pager: {
     display: 'inline-flex', alignItems: 'center', gap: 0, flexShrink: 0,
     border: '1px solid var(--rule)', borderRadius: 'var(--r-sm)',
-    background: 'var(--paper)', overflow: 'hidden',
+    background: 'var(--paper-soft)', overflow: 'hidden',
   },
   pageBtn: {
     width: 22, height: 22, border: 'none', background: 'transparent',
@@ -860,6 +928,42 @@ const styles = {
   contextToggle: {
     alignSelf: 'flex-start', background: 'none', border: 'none', cursor: 'pointer',
     fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--settled)',
+    letterSpacing: '0.04em', padding: '2px 0', marginTop: 2,
+  },
+  // 联网搜索来源块(墨蓝:联网新知,区别于本地材料的陶土棕)
+  sourcesBlock: {
+    marginTop: 20, padding: '10px 14px', background: 'var(--active-soft)',
+    borderRadius: 'var(--r-md)', borderLeft: '3px solid var(--active)',
+  },
+  sourcesHead: {
+    display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+    marginBottom: 8, paddingBottom: 6, borderBottom: '1px dotted var(--rule-soft)',
+  },
+  sourcesLabel: {
+    fontFamily: 'var(--mono)', fontSize: 9.5, color: 'var(--active-ink)',
+    textTransform: 'uppercase', letterSpacing: '0.1em',
+  },
+  sourcesMeta: {
+    fontFamily: 'var(--mono)', fontSize: 9.5, color: 'var(--ink-faint)',
+    letterSpacing: '0.04em',
+  },
+  sourcesBody: { display: 'flex', flexDirection: 'column', gap: 5 },
+  sourcesItem: {
+    display: 'flex', alignItems: 'baseline', gap: 8, textDecoration: 'none',
+    color: 'var(--ink)', fontSize: 12.5, fontFamily: 'var(--serif)',
+    lineHeight: 1.4,
+  },
+  sourcesTitle: {
+    flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap', borderBottom: '1px dotted var(--active)',
+  },
+  sourcesHost: {
+    fontFamily: 'var(--mono)', fontSize: 9.5, color: 'var(--active)',
+    flexShrink: 0, letterSpacing: '0.03em',
+  },
+  sourcesToggle: {
+    alignSelf: 'flex-start', background: 'none', border: 'none', cursor: 'pointer',
+    fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--active-ink)',
     letterSpacing: '0.04em', padding: '2px 0', marginTop: 2,
   },
   // 未匹配概念块
