@@ -115,6 +115,7 @@ async def get_session_detail(session_id: str) -> dict:
                     QAStep.qa_id, QAStep.parent_qa_id, QAStep.question,
                     QAStep.answer, QAStep.status, QAStep.depth,
                     QAStep.extracted_concept_ids, QAStep.created_at,
+                    QAStep.checked,
                 )
                 .where(QAStep.session_id == session_id)
                 .order_by(QAStep.created_at)
@@ -135,6 +136,7 @@ async def get_session_detail(session_id: str) -> dict:
                     "depth": r.depth,
                     "extracted_concept_ids": r.extracted_concept_ids or [],
                     "created_at": r.created_at.isoformat() if r.created_at else None,
+                    "checked": bool(r.checked),
                 }
                 for r in steps
             ],

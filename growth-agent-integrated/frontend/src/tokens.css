@@ -27,6 +27,8 @@
   --t-active-ink: #1E4A6E;
   --t-settled: #8B5A3C;      /* 沉淀信号:已理解/层摘要/档案 */
   --t-settled-soft: #E8DCCD;
+  --t-done: #2F6B4F;         /* 学习完成信号:check 勾选层(深绿) */
+  --t-done-soft: #3E8A66;
   --t-danger: #B4544A;
   --t-danger-soft: #F6E8E5;
   /* 代码块/引用 的主题相关底色 */
@@ -50,6 +52,8 @@
   --active-ink: var(--t-active-ink);
   --settled: var(--t-settled);
   --settled-soft: var(--t-settled-soft);
+  --done: var(--t-done);
+  --done-soft: var(--t-done-soft);
   --danger: var(--t-danger);
   --danger-soft: var(--t-danger-soft);
   --code-bg: var(--t-code-bg);
@@ -120,6 +124,8 @@
   --t-active-ink: #9BC2DC;
   --t-settled: #C9956E;
   --t-settled-soft: #3A2E24;
+  --t-done: #6FAE8A;
+  --t-done-soft: #4A7A62;
   --t-danger: #D88A80;
   --t-danger-soft: #3A2320;
   --t-code-bg: #232931;
@@ -144,6 +150,8 @@
   --t-active-ink: #2A5A4A;
   --t-settled: #8B6A3C;
   --t-settled-soft: #E5DCC8;
+  --t-done: #3E7A5A;
+  --t-done-soft: #5A9A78;
   --t-danger: #B4544A;
   --t-danger-soft: #EDDFDB;
   --t-code-bg: #DDE2D5;
@@ -168,6 +176,8 @@
   --t-active-ink: #8FBEDD;
   --t-settled: #B8805A;
   --t-settled-soft: #2A2218;
+  --t-done: #6FAE8A;
+  --t-done-soft: #4A7A62;
   --t-danger: #C97068;
   --t-danger-soft: #2A1815;
   --t-code-bg: #1A1B17;

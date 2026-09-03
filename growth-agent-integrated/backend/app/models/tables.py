@@ -106,6 +106,8 @@ class QAStep(Base):
     material_id: Mapped[str | None] = mapped_column(
         ForeignKey("learning_material.material_id", ondelete="SET NULL")
     )
+    # 007: 学习完成度手动勾选（左边栏 check 框 -> 深绿背景）
+    checked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

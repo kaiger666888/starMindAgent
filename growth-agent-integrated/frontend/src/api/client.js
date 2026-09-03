@@ -70,6 +70,13 @@ export async function incrementExplore(conceptId) {
   return res.json()
 }
 
+// 手动勾选/取消概念已理解（左边栏概念汇总 check 框）
+export async function setUnderstood(conceptId, understood) {
+  const res = await fetch(`${BASE}/concept/${conceptId}/understood?understood=${!!understood}`, { method: 'PATCH' })
+  if (!res.ok) throw new Error(`set understood failed: ${res.status}`)
+  return res.json()
+}
+
 export async function mergeConcepts(idA, idB) {
   const res = await fetch(`${BASE}/concept/merge`, {
     method: 'POST',
@@ -115,6 +122,13 @@ export async function correctAnnotation(qaId, conceptId, action) {
     body: JSON.stringify({ qa_id: qaId, concept_id: conceptId, action }),
   })
   if (!res.ok) throw new Error(`correct failed: ${res.status}`)
+  return res.json()
+}
+
+// 手动勾选/取消勾选某层学习完成度（左边栏 check 框）
+export async function setChecked(qaId, checked) {
+  const res = await fetch(`${BASE}/qa/${qaId}/checked?checked=${!!checked}`, { method: 'PATCH' })
+  if (!res.ok) throw new Error(`set checked failed: ${res.status}`)
   return res.json()
 }
 

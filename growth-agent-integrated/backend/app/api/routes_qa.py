@@ -10,7 +10,7 @@
 from __future__ import annotations
 import json
 import logging
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from app.qastep import repo, QAStatus, DepthLimitReached, IllegalTransition
@@ -245,6 +245,21 @@ async def drilldown(qa_id: str, req: DriftDownRequest):
         status=QAStatus.GENERATING.value, version=1, depth=0,
         context=drill_context,
     )
+
+
+@router.patch("/{qa_id}/checked")
+async def set_checked(qa_id: str, checked: bool = Query(...)):
+    """手动勾选/取消勾选某层学习完成度（左边栏 check 框）。"""
+    from app.db import session_scope, is_sqlite
+    from sqlalchemy import update as sa_update
+    from app.models.tables import QAStep as _QS
+    async with session_scope() as s:
+        res = await s.execute(
+            sa_update(_QS).where(_QS.qa_id == qa_id).values(checked=checked)
+        )
+        if res.rowcount == 0:
+            raise HTTPException(status_code=404, detail=f"qa_step {qa_id} not found")
+    return {"qa_id": qa_id, "checked": checked}
 
 
 @router.post("/{qa_id}/rollback")

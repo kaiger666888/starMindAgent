@@ -63,6 +63,25 @@ def _is_uuid(v) -> bool:
         return False
 
 
+@router.patch("/{concept_id}/understood")
+async def set_understood(concept_id: str, understood: bool = Query(...)):
+    """手动勾选/取消概念已理解（左边栏概念汇总 check 框）。"""
+    if not _is_uuid(concept_id):
+        raise HTTPException(status_code=400, detail="invalid concept_id")
+    from app.db import session_scope
+    from sqlalchemy import update as sa_update
+    from app.models.tables import ConceptNode
+    async with session_scope() as s:
+        res = await s.execute(
+            sa_update(ConceptNode)
+            .where(ConceptNode.concept_id == concept_id)
+            .values(understood=understood)
+        )
+        if res.rowcount == 0:
+            raise HTTPException(status_code=404, detail=f"concept {concept_id} not found")
+    return {"concept_id": concept_id, "understood": understood}
+
+
 @router.get("/global")
 async def global_graph(user_id: Optional[str] = Query(None)):
     return await concept_service.get_global_graph(user_id=user_id)

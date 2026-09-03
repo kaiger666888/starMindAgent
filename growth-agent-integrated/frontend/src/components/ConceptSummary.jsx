@@ -4,7 +4,7 @@
 //
 // 完成度映射:explore_count 0→10% 1→30% 2→60% 3→85% 4+→95% understood→100%
 
-import { useStore } from '../store/qaStore'
+import { useStore, toggleConceptUnderstood } from '../store/qaStore'
 
 // 完成度百分比
 function completionPct(c) {
@@ -85,18 +85,31 @@ export default function ConceptSummary() {
           const pct = completionPct(c)
           const color = tierColor(c)
           const name = c.canonical_name || c.name
+          const understood = !!c.understood
+          // 进度条式背景:深绿从左向右按完成度增长,understood 满格(与树条目同构)
+          const alpha = understood ? 0.32 : 0.18
+          const bg = `linear-gradient(to right, rgba(47,107,79,${alpha}) 0%, rgba(47,107,79,${alpha}) ${pct * 100}%, transparent ${pct * 100}%)`
           return (
-            <button
-              key={c.concept_id}
-              style={styles.chip}
-              onClick={() => onJump(c)}
-              title={`${name} · 完成度 ${Math.round(pct * 100)}% · 探索 ${c.explore_count || 0} 次`}
-            >
-              <span style={styles.chipName}>{name}</span>
-              <span style={styles.miniBar}>
-                <span style={{ ...styles.miniFill, width: `${pct * 100}%`, background: color }} />
-              </span>
-            </button>
+            <div key={c.concept_id} style={{ display: 'flex', alignItems: 'stretch' }}>
+              <button
+                aria-label={understood ? '取消已理解' : '标记已理解'}
+                style={{ ...styles.check, ...(understood ? styles.checkDone : null) }}
+                onClick={() => toggleConceptUnderstood(c.concept_id)}
+                title={understood ? '已理解(点击取消)' : '标记已理解'}
+              >
+                {understood && <svg width="9" height="8" viewBox="0 0 10 8" aria-hidden="true"><polyline points="1,4 3.8,6.5 9,1" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+              </button>
+              <button
+                style={{ ...styles.chip, background: bg }}
+                onClick={() => onJump(c)}
+                title={`${name} · 完成度 ${Math.round(pct * 100)}% · 探索 ${c.explore_count || 0} 次`}
+              >
+                <span style={styles.chipName}>{name}</span>
+                <span style={styles.miniBar}>
+                  <span style={{ ...styles.miniFill, width: `${pct * 100}%`, background: color }} />
+                </span>
+              </button>
+            </div>
           )
         })}
       </div>
@@ -126,6 +139,15 @@ const styles = {
   overallPct: { fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink-soft)', minWidth: 28, textAlign: 'right' },
   // 概念 list
   list: { display: 'flex', flexDirection: 'column', gap: 4 },
+  // 概念理解 check 框：与 TreeView 行首 check 同构（深绿填充 + 白对钩）
+  check: {
+    width: 14, height: 14, flexShrink: 0, alignSelf: 'center', marginRight: 4,
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    background: 'var(--paper)', border: '1px solid var(--rule)',
+    borderRadius: 'var(--r-sm)', cursor: 'pointer', padding: 0,
+    transition: 'background 0.2s, border-color 0.2s',
+  },
+  checkDone: { background: 'var(--done)', borderColor: 'var(--done)' },
   chip: {
     display: 'flex', alignItems: 'center', gap: 8, width: '100%',
     padding: '5px 8px', border: 'none', background: 'transparent',

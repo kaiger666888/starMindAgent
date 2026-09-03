@@ -3,6 +3,7 @@ import * as api from '../api/client'
 import {
   useStore, pushLayer, updateLayer, popToLayer, setLastViewed,
   clearInflight, guardAction, setActiveSession, resetStack, findNode, setRoot,
+  toggleChecked,
 } from '../store/qaStore'
 import ConceptSummary from './ConceptSummary'
 
@@ -62,6 +63,7 @@ export default function TreeView() {
         const prev = cur?.candidates || []
         updateLayer(qaId, { candidates: [...prev, ...ev.concepts] })
       },
+      search_sources: (ev) => updateLayer(qaId, { searchSources: ev.sources }),
       layer_summary: (ev) => updateLayer(qaId, { layer_summary: ev.layer_summary }),
       done: () => { updateLayer(qaId, { loading: false }); clearInflight() },
       error: () => { updateLayer(qaId, { loading: false }); clearInflight() },
@@ -173,6 +175,14 @@ function TreeNode({ node, depth, currentPath, onSwitch, onAsk }) {
   const concepts = node.concepts || []
   const understoodN = concepts.filter((c) => c.understood || (c.explore_count >= 2)).length
   const layerPct = concepts.length > 0 ? understoodN / concepts.length : null
+  // 学习进度(背景进度条):手动勾选 = 100%;否则回退概念理解比例
+  const checked = !!node.checked
+  const progress = checked ? 1 : (layerPct ?? 0)
+  // 进度条式背景:深绿从左向右按 progress 增长;勾选满格。
+  // 有进度(>0)才渲染填充,零进度保持透明避免整片绿底。
+  const progressBg = progress > 0
+    ? `linear-gradient(to right, rgba(47,107,79,${checked ? 0.32 : 0.18}) 0%, rgba(47,107,79,${checked ? 0.32 : 0.18}) ${progress * 100}%, transparent ${progress * 100}%)`
+    : 'transparent'
   // 下钻准备度:后端为这层检索材料准备好了多少(context.preparation 0-1)
   // 优先于概念完成度展示——准备度反映"材料就绪",概念完成度是回退
   const prep = node.context?.preparation
@@ -181,13 +191,25 @@ function TreeNode({ node, depth, currentPath, onSwitch, onAsk }) {
     <div style={styles.treeNode}>
       <div style={styles.layerRow}>
         <button
+          aria-label={checked ? '取消完成标记' : '标记已完成'}
+          style={{
+            ...styles.checkBtn,
+            ...(checked ? styles.checkBtnDone : null),
+          }}
+          onClick={(e) => { e.stopPropagation(); toggleChecked(node.qa_id) }}
+          title={checked ? '已完成(点击取消)' : '标记已完成'}
+        >
+          {checked && <svg width="9" height="8" viewBox="0 0 10 8" aria-hidden="true"><polyline points="1,4 3.8,6.5 9,1" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+        </button>
+        <button
           style={{
             ...styles.layerBtn,
-            borderLeft: `2px solid ${stemColor}`,
-            background: isCurrent ? 'var(--active-soft)' : 'transparent',
+            borderLeft: `2px solid ${checked ? 'var(--done)' : stemColor}`,
+            background: progressBg,
             opacity: isCurrent ? 1 : 0.72,
             fontWeight: isCurrent ? 500 : 400,
             flex: 1, minWidth: 0,
+            transition: 'background 0.4s ease, border-color 0.2s, opacity 0.15s',
           }}
           onClick={() => onSwitch(node.qa_id)}
           title={isCurrent ? '当前层' : (layerInfo.label !== node.question ? node.question : '点击切换到这层')}
@@ -220,7 +242,7 @@ function TreeNode({ node, depth, currentPath, onSwitch, onAsk }) {
                 }} />
               </span>
             </div>
-          ) : layerPct !== null && (
+          ) : layerPct !== null && !checked && (
             <div style={styles.layerProgRow}>
               <span style={styles.layerProgLabel}>
                 概念 {understoodN}/{concepts.length}
@@ -228,6 +250,11 @@ function TreeNode({ node, depth, currentPath, onSwitch, onAsk }) {
               <span style={styles.layerProgBar}>
                 <span style={{ ...styles.layerProgFill, width: `${layerPct * 100}%` }} />
               </span>
+            </div>
+          )}
+          {checked && (
+            <div style={styles.doneRow}>
+              <span style={styles.doneLabel}>已完成</span>
             </div>
           )}
         </button>
@@ -308,6 +335,22 @@ const styles = {
     cursor: 'pointer', fontFamily: 'var(--sans)', color: 'var(--ink)', transition: 'background 0.15s, opacity 0.15s',
   },
   layerHead: { display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 4 },
+  // 学习完成度 check 框：行首小方块，勾选后深绿填充 + 白对钩
+  checkBtn: {
+    width: 16, height: 16, flexShrink: 0, alignSelf: 'center', marginLeft: 2,
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    background: 'var(--paper)', border: '1px solid var(--rule)',
+    borderRadius: 'var(--r-sm)', cursor: 'pointer', padding: 0,
+    transition: 'background 0.2s, border-color 0.2s',
+  },
+  checkBtnDone: {
+    background: 'var(--done)', borderColor: 'var(--done)',
+  },
+  doneRow: { marginTop: 4 },
+  doneLabel: {
+    fontFamily: 'var(--mono)', fontSize: 8.5, color: 'var(--done)',
+    letterSpacing: '0.04em',
+  },
   depthTag: {
     fontFamily: 'var(--mono)', fontSize: 9, color: 'var(--active)', background: 'var(--paper)',
     borderRadius: 'var(--r-sm)', padding: '1px 5px', letterSpacing: '0.04em', flexShrink: 0,
