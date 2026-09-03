@@ -221,6 +221,15 @@ export function updateLayer(qaId, patch) {
   }
 }
 
+// 原地 patch 后刷新：复制根节点换掉 state.tree 引用。
+// useSyncExternalStore 按 getSnapshot 返回值是否相等决定是否重渲染，
+// 只 emit() 而引用不变时订阅 s.tree 的组件（TreeView/ReadingPane 等）
+// 快照相等会跳过刷新——勾选 check 后 UI 冻住就是这个坑。
+function bumpTree() {
+  if (state.tree) state.tree = { ...state.tree }
+  emit()
+}
+
 // 勾选/取消勾选某层学习完成度：乐观更新本地节点，失败回滚并抛错
 export async function toggleChecked(qaId) {
   const node = findNode(qaId)
@@ -228,13 +237,13 @@ export async function toggleChecked(qaId) {
   const prev = !!node.checked
   const next = !prev
   node.checked = next
-  emit()
+  bumpTree()
   try {
     const { setChecked } = await import('../api/client')
     await setChecked(qaId, next)
   } catch (err) {
     node.checked = prev
-    emit()
+    bumpTree()
     console.error('[toggleChecked] 失败:', err)
   }
 }
@@ -256,13 +265,13 @@ export async function toggleConceptUnderstood(conceptId) {
   walk(state.tree)
   if (touched.length === 0) return
   const next = touched[0].concept.understood
-  emit()
+  bumpTree()
   try {
     const { setUnderstood } = await import('../api/client')
     await setUnderstood(conceptId, next)
   } catch (err) {
     for (const t of touched) t.concept.understood = t.prev
-    emit()
+    bumpTree()
     console.error('[toggleConceptUnderstood] 失败:', err)
   }
 }
