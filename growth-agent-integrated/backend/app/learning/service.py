@@ -298,18 +298,30 @@ async def get_material_context_detail(material_id: str, query: str, max_chars: i
     if not chunks:
         return {"context_text": plain[:max_chars], "snippets": [plain[:max_chars]],
                 "preparation": 1.0, "total_chunks": 1, "matched_chunks": 1}
-    # query 关键词
-    qterms = [w for w in re.split(r"[\s，。、；]+", query) if len(w) >= 2]
+    # query 关键词：jieba 切词（中文问句无空格，re 按标点分词会得到
+    # 整句超长 term，子串匹配必 0 命中——自举测试实测定位）。
+    qterms = [w for w in re.split(r"[\s，。、；？?]+", query) if len(w) >= 2]
+    try:
+        import jieba
+        jieba_terms = [w for w in jieba.lcut(query) if len(w) >= 2]
+        qterms = list(dict.fromkeys(qterms + jieba_terms))
+    except ImportError:
+        pass
     scored = []
     for i, ch in enumerate(chunks):
         score = sum(1 for t in qterms if t in ch)
         scored.append((score, i, ch))
     scored.sort(key=lambda x: (-x[0], x[1]))
+    # 只装 score>=1 的 chunk：零命中时 out 为空 -> 走下面的空返回，
+    # 不注入材料开头（材料开头是最高层概括，注入会把回答推向同质化）。
+    # 旧实现循环不过滤 score=0，零命中照样按原序塞材料开头（防护死代码）。
     out = []
     total = 0
     for score, i, ch in scored:
+        if score < 1:
+            break  # 已按分数降序，后面全是 0 分
         if total + len(ch) > max_chars:
-            break
+            continue  # 超预算的跳过（后面可能更小），不再 break
         out.append(ch)
         total += len(ch)
     # 相关性保底：最高分 chunk 超预算装不下时截断保留它（相关性优先），

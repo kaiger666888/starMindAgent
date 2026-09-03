@@ -18,6 +18,11 @@ export LLM_BASE_URL=https://higress.devops.ecp.digitalvolvo.com/gateway/v1
 export LLM_API_KEY=4375b0f1-b3a6-46f9-9421-e1897c12aca8
 export LLM_MODEL=glm
 
+# A2 代码库 grounding（app/search/codebase.py rg 检索）：
+# QA 问题含代码标识符时预检索真实代码片段注入 prompt。
+# 置空 = 关闭（零影响）。当前指向本仓库自身（自举学习场景）。
+export CODEBASE_DIR="C:/Kais_Projects/Git_Projects/Github/starMindAgent/growth-agent-integrated/backend/app"
+
 # 清 pycache（无 --reload 模式下改代码必须清，否则旧字节码可能残留）
 find app -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
 

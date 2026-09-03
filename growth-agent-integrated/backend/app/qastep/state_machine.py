@@ -183,6 +183,21 @@ class QAStepPipeline:
                     log.warning("error-abort transition failed qa_id=%s: %s", self.qa_id, e)
                 break
 
+        # -- 联网搜索来源（backend agentic 轮触发过搜索时非空）--
+        # 读 backend.last_search_sources 推给前端渲染"参考来源"块
+        try:
+            # InferenceSession 的 client 是私有命名 _client（.backend/.client 都拿不到）
+            _backend = getattr(self.inference, 'backend', None)
+            if _backend is None:
+                _client = (getattr(self.inference, 'client', None)
+                           or getattr(self.inference, '_client', None))
+                _backend = getattr(_client, 'backend', None) if _client else None
+            _sources = getattr(_backend, 'last_search_sources', None)
+            if _sources:
+                yield {'type': 'search_sources', 'sources': _sources[:6]}
+        except Exception:  # noqa: BLE001  来源展示失败不影响主链路
+            pass
+
         # —— extracting：概念归一化 + 落盘 ——
         concepts_out: list[dict] = []
         has_concepts = concept_block is not None and concept_block.concepts

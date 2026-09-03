@@ -132,7 +132,90 @@ def _concept_system_prompt(model: str = "llm") -> str:
         f'"confidence": 0.9}}, ...], "model": "{model}"}}\n'
         "name 为 2-8 字核心概念名，抽 3-8 个；aliases 含中英文/缩写；"
         "confidence 取 0-1。正文里禁止出现 sentinel 标记。"
+        # 代码库 grounding 引导（CODEBASE_DIR 配置时 tools 轮才带 code_query）。
+        # 放 web_search 之前：glm 对工具调用的触发判断受 system 尾部指令稀释，
+        # "学习助手"人设语境下倾向直答，代码类问题必须强指令（E2E 实测定位）。
+        "若提供了 code_query 工具：只要问题中出现具体类名/函数名/文件名，或问"
+        "「代码库里如何实现/定义在哪」，必须先调用它检索真实代码片段再回答，"
+        "禁止凭通用知识编造代码库实现；回答时指明片段所在文件。仅纯理论/通用"
+        "概念问题直答。"
+        # 联网搜索引导（tools 轮才生效，无 tools 时模型忽略此段）
+        "若提供了 web_search 工具：仅在问题涉及时效性信息（最新版本/近期发布/"
+        "新闻/当前状态）或你不确定的事实时调用它，经典概念与原理类问题直接回答。"
+        "基于搜索结果回答时自然融入信息，并在正文提及关键出处名。"
     )
+
+
+# 联网搜索工具定义（OpenAI function calling）。
+# 触发策略由 system prompt 引导模型自判：时效性问题才搜，经典概念直答。
+_WEB_SEARCH_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "web_search",
+        "description": "搜索互联网获取最新信息。仅当问题涉及时效性内容（最新版本、近期发布、新闻、当前状态）或你不确定的事实时调用；经典概念、原理、机制类问题不要调用。",
+        "parameters": {
+            "type": "object",
+            "properties": {"query": {"type": "string", "description": "搜索关键词，精炼到 10 字内"}},
+            "required": ["query"],
+        },
+    },
+}
+
+# 代码库 grounding 工具（rg 执行层在 app/search/codebase.py）。
+# CODEBASE_DIR 未配置时不进 tools 列表，链路零影响。
+_CODE_QUERY_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "code_query",
+        "description": "在已配置的代码库中检索真实代码片段（ripgrep）。规则：只要问题中出现具体类名/函数名/文件名/模块名，或出现「代码库」「源码」「实现」「定义在哪」等字样，就必须先调用本工具拿到真实代码再回答，禁止凭通用知识猜测或编造代码库的实现细节。仅纯理论/通用概念问题（完全不涉及具体代码）才不调用。",
+        "parameters": {
+            "type": "object",
+            "properties": {"query": {"type": "string", "description": "代码检索词：类名/函数名/标识符/关键词，10 字内"}},
+            "required": ["query"],
+        },
+    },
+}
+
+
+def tool_calls_raw(calls: list[dict]) -> list[dict]:
+    """聚合后的 tool_calls 转回 OpenAI 原始格式（role=tool 回填用）。
+
+    聚合格式存的是 arguments_json（含我们拼的键名）；回填网关要
+    标准的 function.arguments 字符串。
+    """
+    return [{
+        "id": c["id"], "type": "function",
+        "function": {"name": c["function"]["name"],
+                     "arguments": c["function"]["arguments_json"]},
+    } for c in calls]
+
+
+def _code_terms(prompt: str, max_terms: int = 2) -> list[str]:
+    """从 prompt 抽代码标识符特征词（确定性预检索用）。
+
+    命中模式（prompt 尾部优先，SYSTEM/链摘要是中文不会误命中）：
+    - 驼峰标识符：QAStepPipeline / OpenAICompatibleBackend
+    - 下划线标识符：state_machine / run_code_search（≥2 段）
+    - 「X」引号词：下钻问题的概念名（查不到就空，零伤害）
+    短词（≤3 字符）与常见英文虚词过滤掉。
+    """
+    import re as _re
+    seen: list[str] = []
+    tail = prompt[-600:]  # question 在 blob 末端，只扫尾部
+    pats = [
+        # CamelCase（首段支持连续大写开头：QA/LLM/SMA）
+        r"(?:[A-Z]{2,}[a-z0-9]*|[A-Z][a-z0-9]+)(?:[A-Z][a-z0-9]+)+",
+        r"[a-z]{2,}(?:_[a-z0-9]{2,})+",              # snake_case
+        r"「([^」]{2,20})」",                          # 引号概念词
+    ]
+    for p in pats:
+        for m in _re.findall(p, tail):
+            t = m if isinstance(m, str) else str(m)
+            t = t.strip()
+            if len(t) >= 4 and t.lower() not in ("test", "json", "http", "none", "true", "false") \
+                    and t not in seen:
+                seen.append(t)
+    return seen[:max_terms]
 
 
 # ---------------------------------------------------------------------------
@@ -172,25 +255,187 @@ class OpenAICompatibleBackend:
         return _concept_system_prompt(self.model or "llm")
 
     async def stream(self, prompt: str) -> AsyncIterator[str]:
+        """两轮 agentic 流式（联网搜索按需触发）。
+
+        第一轮：带 web_search tools 定义流式调用--
+          - 经典概念：模型直接吐正文 -> 透传（零额外开销，流式体验不变）
+          - 时效性问题：模型返回 tool_calls -> 聚合 query，执行搜索，
+            把结果以 role=tool 消息回填，进第二轮
+        第二轮：流式产出正文 + sentinel 概念 JSON（协议不变）。
+
+        触发策略三层（SEARCH_ENABLED 总开关 / 模型自判 / 每问最多 1 轮
+        3 query 硬上限，见 app/search/provider.py run_searches）。
+        搜索来源存 self.last_search_sources 供 pipeline 发 SSE 来源事件。
+        """
         import httpx
         self._aborted = False
+        self.last_search_sources: list[dict] = []
+        from app.search.provider import run_searches, default_search_provider
+        from app.search.codebase import run_code_search, codebase_root
+        search_on = default_search_provider() is not None
+        code_on = codebase_root() is not None
+        # 打桩：工具挂载状态（code grounding 排障用，grep "agent tools"）
+        log.info("agent tools: web_search=%s code_query=%s (root=%s)",
+                 search_on, code_on, codebase_root() or "-")
+
         messages = [{"role": "system", "content": self._concept_system()},
             {"role": "user", "content": prompt}]
+        # 确定性代码预检索：问题含代码标识符特征时直接 rg 注入，不赌模型自判。
+        # 实测 glm 对「自以为知道」的代码问题不触发 tool_calls（模型幻觉模式下
+        # 编造实现细节），web_search 能触发是因为时效性问题模型知道自己不知道。
+        # 特征词从 prompt 尾部抽（question 在 blob 末端）：驼峰/下划线标识符。
+        if code_on:
+            terms = _code_terms(prompt)
+            if terms:
+                pre_text, _ = await run_code_search(terms)
+                if pre_text:
+                    messages[1]["content"] = (
+                        "【代码库检索结果】（与问题相关的真实代码片段，"
+                        "回答时优先依据这些片段并指明文件，禁止编造）\n"
+                        + pre_text[:3000] + "\n\n【原问题】\n" + prompt)
+        if search_on or code_on:
+            # 第一轮：流式 + tools（乐观直吐正文）
+            async for tok in self._stream_round(messages, expect_tools=True,
+                                               tools=self._round_tools(search_on, code_on)):
+                yield tok
+            if self._round1_tool_calls:
+                # 分流 tool_calls：web_search -> run_searches，code_query -> run_code_search。
+                # 不走 role=tool 回填：实测网关对 tool 结果消息的续写不稳定
+                # （间歇性 content="" finish=stop 空响应，约 50%），而 prompt
+                # 注入路径稳定（与学习材料 material_context 同构）。
+                # arguments_json 是 '{"query": "..."}' 原始串，须解析出 query 值。
+                search_qs: list[str] = []
+                code_qs: list[str] = []
+                for c in self._round1_tool_calls:
+                    try:
+                        q = json.loads(c["function"]["arguments_json"]).get("query", "")
+                    except (json.JSONDecodeError, AttributeError):
+                        continue
+                    if not q:
+                        continue
+                    if c["function"]["name"] == "code_query":
+                        code_qs.append(q)
+                    else:
+                        search_qs.append(q)
+                # 两类工具并行执行（互不等待）
+                search_text, sources = (await run_searches(search_qs)
+                                        if search_qs else ("", []))
+                self.last_search_sources = sources
+                code_text, _ = (await run_code_search(code_qs)
+                                if code_qs else ("", []))
+                messages2 = [messages[0], dict(messages[1])]  # system + user 副本
+                sections: list[str] = []
+                if code_text:
+                    sections.append(
+                        "【代码库检索结果】（基于这些真实代码片段回答，"
+                        "自然指明片段所在文件，不要编造）\n" + code_text[:3000])
+                if search_text:
+                    sections.append(
+                        "【联网搜索结果】（基于这些最新信息回答，"
+                        "自然融入正文并提及关键出处名）\n" + search_text[:3000])
+                if sections:
+                    messages2[1]["content"] = ("\n\n".join(sections)
+                                              + "\n\n【原问题】\n" + messages[1]["content"])
+                else:
+                    messages2[1]["content"] = (
+                        "（检索无结果，请基于已有知识回答并说明可能不全面）\n\n"
+                        + messages[1]["content"])
+                async for tok in self._stream_plain(messages2):
+                    yield tok
+            return
+        # 全部开关关闭：常规单轮流式
+        async for tok in self._stream_plain(messages):
+            yield tok
+        return
+
+    @staticmethod
+    def _round_tools(search_on: bool, code_on: bool) -> list[dict]:
+        """第一轮挂载的工具列表（按开关拼装）。"""
+        tools = []
+        if search_on:
+            tools.append(_WEB_SEARCH_TOOL)
+        if code_on:
+            tools.append(_CODE_QUERY_TOOL)
+        return tools
+
+    async def _stream_round(self, messages: list, expect_tools: bool,
+                            tools: list[dict] | None = None) -> AsyncIterator[str]:
+        """第一轮流式（乐观直吐）：正文 delta 直接 yield，直答场景全程流式
+        零损耗；同时聚合 tool_calls 增量到 self._round1_tool_calls。模型需要
+        搜索时 content 为空直接吐 tool_calls（实测），几乎无收回场景。"""
+        self._round1_tool_calls = None
+        self._prologue = []
+        agg = {}
+        payload = self._payload(messages, stream=True)
+        if expect_tools:
+            payload["tools"] = tools or [_WEB_SEARCH_TOOL]
+            payload["tool_choice"] = "auto"
+        async with self._http.stream("POST", self.endpoint,
+                headers={"Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"}, json=payload,
+                timeout=settings.inference_timeout_s) as resp:
+            async for line in resp.aiter_lines():
+                if self._aborted:
+                    break
+                if not (line.startswith("data: ") and line.strip() != "data: [DONE]"):
+                    continue
+                try:
+                    chunk = json.loads(line[6:])["choices"][0]
+                except (json.JSONDecodeError, KeyError, IndexError):
+                    continue
+                delta = chunk.get("delta", {})
+                if delta.get("content"):
+                    self._prologue.append(delta["content"])
+                    yield delta["content"]
+                for tc in delta.get("tool_calls") or []:
+                    idx = tc.get("index", 0)
+                    slot = agg.setdefault(idx, {
+                        "id": tc.get("id") or "", "type": "function",
+                        "function": {"name": "", "arguments_json": ""},
+                    })
+                    if tc.get("id"):
+                        slot["id"] = tc["id"]
+                    fn = tc.get("function") or {}
+                    if fn.get("name"):
+                        slot["function"]["name"] = fn["name"]
+                    if fn.get("arguments"):
+                        slot["function"]["arguments_json"] += fn["arguments"]
+        if agg:
+            calls = [agg[i] for i in sorted(agg)]
+            calls = [c for c in calls if self._safe_query(c)]
+            if calls:
+                if self._prologue:
+                    log.warning("round1 had both content and tool_calls (%d chars lost)", len("".join(self._prologue)))
+                self._round1_tool_calls = calls
+
+    def _safe_query(self, call: dict) -> bool:
+        """校验聚合的 tool_call：函数名在白名单 + arguments 可解析出非空 query。"""
+        import json as _json
+        if call["function"]["name"] not in ("web_search", "code_query"):
+            return False
+        try:
+            args = _json.loads(call["function"]["arguments_json"] or "{}")
+            return bool(args.get("query"))
+        except (_json.JSONDecodeError, AttributeError):
+            return False
+
+    async def _stream_plain(self, messages: list) -> AsyncIterator[str]:
+        """纯流式（无 tools）：搜索场景是 tool 结果回填后的第二轮最终生成。"""
         payload = self._payload(messages, stream=True)
         async with self._http.stream("POST", self.endpoint,
                 headers={"Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json"}, json=payload,
                 timeout=settings.inference_timeout_s) as resp:
-                async for line in resp.aiter_lines():
-                    if self._aborted:
-                        break
-                    if line.startswith("data: ") and line.strip() != "data: [DONE]":
-                        try:
-                            delta = json.loads(line[6:])["choices"][0]["delta"].get("content", "")
-                            if delta:
-                                yield delta
-                        except (json.JSONDecodeError, KeyError, IndexError):
-                            continue
+            async for line in resp.aiter_lines():
+                if self._aborted:
+                    break
+                if line.startswith("data: ") and line.strip() != "data: [DONE]":
+                    try:
+                        delta = json.loads(line[6:])["choices"][0]["delta"].get("content", "")
+                        if delta:
+                            yield delta
+                    except (json.JSONDecodeError, KeyError, IndexError):
+                        continue
 
     async def extract_only(self, answer_text: str) -> ConceptBlock:
         import httpx
