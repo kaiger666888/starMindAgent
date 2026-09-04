@@ -255,3 +255,59 @@ export async function getMaterial(materialId) {
   if (!res.ok) throw new Error(`get material failed: ${res.status}`)
   return res.json()
 }
+
+// —— 记忆卡片复习（盲 check）——
+// 今日到期复习队列（active 且 due_at<=now，按 due_at 升序）
+export async function dueCards(userId, limit = 50) {
+  const res = await fetch(`${BASE}/memory/cards/users/${userId}/due?limit=${limit}`)
+  if (!res.ok) throw new Error(`due cards failed: ${res.status}`)
+  return res.json()
+}
+
+// 复习进度统计（进度区数据源）
+export async function reviewProgress(userId) {
+  const res = await fetch(`${BASE}/memory/cards/users/${userId}/progress`)
+  if (!res.ok) throw new Error(`review progress failed: ${res.status}`)
+  return res.json()
+}
+
+// 全部卡片（含归档，卡片库区数据源）
+export async function allCards(userId, limit = 200) {
+  const res = await fetch(`${BASE}/memory/cards/users/${userId}/all?limit=${limit}`)
+  if (!res.ok) throw new Error(`all cards failed: ${res.status}`)
+  return res.json()
+}
+
+// 阅读区选中文字 → 主动建卡（同步返回卡片）
+export async function cardFromSelection(userId, selectedText, qaId, conceptId, question) {
+  const res = await fetch(`${BASE}/memory/cards/users/${userId}/from-selection`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      selected_text: selectedText,
+      qa_id: qaId || null,
+      concept_id: conceptId || null,
+      question: question || null,
+    }),
+  })
+  if (!res.ok) throw new Error(`card from selection failed: ${res.status}`)
+  return res.json()
+}
+
+// 盲 check 评分：understood（streak+1，连续3天归档）/ forgot / retry（重置，次日再到期）
+export async function gradeCard(cardId, grade) {
+  const res = await fetch(`${BASE}/memory/cards/${cardId}/grade`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ grade }),
+  })
+  if (!res.ok) throw new Error(`grade card failed: ${res.status}`)
+  return res.json()
+}
+
+// 删除卡片
+export async function deleteCard(cardId) {
+  const res = await fetch(`${BASE}/memory/cards/${cardId}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`delete card failed: ${res.status}`)
+  return res.json()
+}

@@ -3,6 +3,7 @@ import TreeView from './components/TreeView'
 import ConceptGraph from './components/ConceptGraph'
 import ReadingPane from './components/ReadingPane'
 import MemoryView from './components/MemoryView'
+import ReviewView from './components/ReviewView'
 import SettingsPanel from './components/SettingsPanel'
 import { useStore } from './store/qaStore'
 import { loadPrefs, zoneStyle } from './bindding'
@@ -10,7 +11,7 @@ import { loadPrefs, zoneStyle } from './bindding'
 export default function App() {
   const tree = useStore((s) => s.tree)
   const inflight = useStore((s) => s.inflight)
-  const [view, setView] = useState('explore') // explore | memory
+  const [view, setView] = useState('explore') // explore | memory | review
   // 装帧：分区字体/字号/纸色（容器级 CSS 变量遮蔽，组件零改动）
   const [bindding, setBindding] = useState(() => loadPrefs())
 
@@ -57,6 +58,12 @@ export default function App() {
             >
               档案
             </button>
+            <button
+              style={{ ...styles.navBtn, ...(view === 'review' ? styles.navBtnActiveReview : styles.navBtnIdle) }}
+              onClick={() => setView('review')}
+            >
+              复习
+            </button>
           </nav>
           <SettingsPanel prefs={bindding} onChange={setBindding} />
         </div>
@@ -74,9 +81,13 @@ export default function App() {
               <ConceptGraph />
             </aside>
           </>
-        ) : (
+        ) : view === 'memory' ? (
           <main data-zone="memory" style={{ ...styles.memoryMain, ...zoneStyle('memory', bindding.memory) }}>
             <MemoryView />
+          </main>
+        ) : (
+          <main data-zone="review" style={styles.memoryMain}>
+            <ReviewView />
           </main>
         )}
       </div>
@@ -109,6 +120,7 @@ const styles = {
   navBtnIdle: { background: 'transparent', color: 'var(--ink-soft)' },
   navBtnActive: { background: 'var(--active)', color: '#fff', fontWeight: 500 },
   navBtnActiveSettled: { background: 'var(--settled)', color: '#fff', fontWeight: 500 },
+  navBtnActiveReview: { background: 'var(--active-ink)', color: '#fff', fontWeight: 500 },
   inflight: {
     display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11,
     color: 'var(--active)', fontFamily: 'var(--mono)', letterSpacing: '0.04em',

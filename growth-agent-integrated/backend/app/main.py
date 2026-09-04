@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.api import qa_router, concept_router, harness_router, memory_router, learning_router
+from app.api import qa_router, concept_router, harness_router, memory_router, learning_router, cards_router
 from app.inference import backfill_queue, backfill_processor
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -30,6 +30,10 @@ async def lifespan(app: FastAPI):
         log.info("harness backfill worker started")
     # 兼容旧 backfill_queue（主仓 tasks.py）
     backfill_queue.start_worker(backfill_processor)
+    # 记忆卡片：周期扫描 checked QA 生成卡片（后台 worker，30 分钟一轮）
+    from app.memory.cards import card_worker
+    card_worker.start()
+    log.info("memory card worker started")
     # 启动：seed 预置核心概念（需求五"预置+LLM补充"）
     try:
         from app.concept import concept_service
@@ -42,6 +46,7 @@ async def lifespan(app: FastAPI):
     # 关闭：优雅停机
     if h.pool:
         await h.pool.stop()
+    await card_worker.stop()
 
 
 app = FastAPI(
@@ -60,6 +65,7 @@ app.include_router(concept_router)
 app.include_router(harness_router)
 app.include_router(memory_router)
 app.include_router(learning_router)
+app.include_router(cards_router)
 
 
 @app.get("/health")
@@ -79,5 +85,9 @@ async def root():
                       "/memory/users/{user_id}/sessions",
                       "/memory/sessions/{session_id}",
                       "/memory/users/{user_id}/profile",
-                      "/memory/users/{user_id}/profile/refresh"],
+                      "/memory/users/{user_id}/profile/refresh",
+                      "/memory/cards/users/{user_id}/due",
+                      "/memory/cards/users/{user_id}/progress",
+                      "/memory/cards/users/{user_id}/from-selection",
+                      "/memory/cards/{card_id}/grade"],
     }

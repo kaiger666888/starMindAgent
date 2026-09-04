@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime
 from sqlalchemy import (
     String, Text, Integer, Float, DateTime, ForeignKey, CheckConstraint, Index, func,
-    BigInteger, Boolean, JSON,
+    BigInteger, Boolean, JSON, UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -197,6 +197,48 @@ class UserProfile(Base):
 # ---------------------------------------------------------------------------
 # 学习材料导入（006 迁移）：导入 markdown 作探索根 + 上下文注入
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# 记忆卡片（008 迁移）：LLM 周期总结 QA 成卡片，盲 check 复习
+# - streak 连续「理解」天数，≥3 归档（status=archived）
+# - due_at 到期时间：忘记/明天再试 → 次日；理解 → 次日（streak+1）
+# ---------------------------------------------------------------------------
+class MemoryCard(Base):
+    __tablename__ = "memory_card"
+    card_id: Mapped[str] = mapped_column(_UUID, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(Text, ForeignKey("app_user.user_id", ondelete="CASCADE"), nullable=False)
+    concept_id: Mapped[str | None] = mapped_column(
+        ForeignKey("concept_node.concept_id", ondelete="CASCADE")
+    )
+    qa_id: Mapped[str | None] = mapped_column(
+        ForeignKey("qa_step.qa_id", ondelete="SET NULL")
+    )
+    session_id: Mapped[str | None] = mapped_column(_UUID)  # 无 FK，与 concept_edge 同约定
+    concept_name: Mapped[str] = mapped_column(Text, nullable=False)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    answer: Mapped[str] = mapped_column(Text, nullable=False)
+    source_answer: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="active")
+    streak: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    review_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=func.now())
+    last_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_grade: Mapped[str | None] = mapped_column(Text)
+    generator_model: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint("status IN ('active','archived')", name="ck_card_status"),
+        CheckConstraint(
+            "last_grade IN ('understood','forgot','retry') OR last_grade IS NULL",
+            name="ck_card_grade",
+        ),
+        Index("idx_card_user_due", "user_id", "status", "due_at"),
+        Index("idx_card_user_created", "user_id", "created_at"),
+        UniqueConstraint("user_id", "qa_id", "concept_id", name="uq_card_user_qa_concept"),
+    )
+
+
 class LearningMaterial(Base):
     __tablename__ = "learning_material"
     material_id: Mapped[str] = mapped_column(_UUID, primary_key=True, default=_uuid)
