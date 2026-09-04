@@ -58,6 +58,8 @@ class InferenceClient:
         # 学习材料相关段落：按 question 检索出的 chunk，拼 prompt 时用，
         # 不进 question 存库（避免子层标题被污染成几百字拼接串）
         self._material_context: str | None = None
+        # 就选段提问：用户在当前页面选中的原文，拼 prompt 时用（独立预算槽）
+        self._selection: str | None = None
 
     # —— Protocol 字段 ——
     @property
@@ -70,6 +72,11 @@ class InferenceClient:
     def set_material_context(self, ctx: str | None) -> None:
         """注入学习材料相关段落，stream() 拼 prompt 时用，不污染 question 存库。"""
         self._material_context = ctx
+
+    def set_selection(self, sel: str | None) -> None:
+        """就选段提问：注入用户在当前页面选中的原文，stream() 拼 prompt 时用。
+        用户的短问题（如"为什么"）要结合选中原文理解，不污染 question 存库。"""
+        self._selection = sel
 
     def set_chain(self, chain) -> None:
         """注入概念链（下钻路径），stream() 组 prompt 时填充概念链槽。
@@ -85,7 +92,8 @@ class InferenceClient:
 
     # —— 主入口：产出语义事件 ——
     async def stream(self) -> AsyncIterator[dict]:
-        prompt = build_prompt(self.question, self._chain, self._material_context)
+        prompt = build_prompt(self.question, self._chain, self._material_context,
+                              self._selection)
         det = SentinelDetector()
         answer_started = False
         # 攒一份正文文本：L1 重试抽取 / L2 兜底都要拿正文调 extract_only，

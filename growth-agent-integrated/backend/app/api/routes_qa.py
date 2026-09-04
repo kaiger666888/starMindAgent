@@ -18,7 +18,7 @@ from app.qastep.state_machine import QAStepPipeline
 from app.qastep.repository import QAStepRepository, _uuid_cast
 from app.concept import normalizer
 from app.inference import StubInferenceSession
-from app.schemas import QAStartRequest, QAStepOut, DriftDownRequest, RollbackRequest
+from app.schemas import QAStartRequest, QAStepOut, DriftDownRequest, RollbackRequest, ReAskRequest
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/qa", tags=["qa"])
@@ -33,6 +33,7 @@ async def _pipeline_for(qa_id: str, session_id: str, question: str) -> QAStepPip
     # 概念链注入：沿 parent_qa_id 回溯构建下钻路径（浅->深），填 build_prompt
     # 概念链槽。此前该槽从未被填充 -> L2+ 回答无路径上下文，模型只能泛讲
     # 主题（"对最高层内容的概括性解读"的同质化根因）。
+    # 链节点带每层 layer_summary（后台总结缓存），滑窗传导进 prompt。
     chain = await _build_chain(qa_id)
     if chain:
         pipe.set_chain(chain)
@@ -43,7 +44,9 @@ async def _build_chain(qa_id: str, max_len: int = 10) -> list:
     """沿 parent_qa_id 向上回溯，构建从根到父层的概念链（ChainNode 列表，浅->深）。
 
     ChainNode.concept 从父层 question 提取（下钻问句格式「深入解释「X」」取 X；
-    旧数据/自由问句取前 20 字）。返回列表不含当前层自身。
+    旧数据/自由问句取前 20 字）；ChainNode.summary 带上该层后台生成的总结
+    （layer_summary），让深层的 prompt 里有祖先层的语义脉络（滑动窗口传导）。
+    返回列表不含当前层自身。
     """
     import re as _re
     from app.inference.context import ChainNode
@@ -59,12 +62,13 @@ async def _build_chain(qa_id: str, max_len: int = 10) -> list:
         seen.add(cur)
         async with session_scope() as s:
             row = (
-                await s.execute(_sel(_QS.parent_qa_id, _QS.question, _QS.depth)
+                await s.execute(_sel(_QS.parent_qa_id, _QS.question, _QS.depth,
+                                    _QS.layer_summary)
                 .where(_QS.qa_id == cur))
             ).first()
         if row is None:
             break
-        parent_qa_id, question, depth = row
+        parent_qa_id, question, depth, layer_summary = row
         if parent_qa_id is None:
             break  # 当前层是根，链到此为止（根层自身不入链）
         # 提取父层的"被下钻概念"：下钻问句取「X」，否则剥疑问前缀后取前 20 字
@@ -76,7 +80,8 @@ async def _build_chain(qa_id: str, max_len: int = 10) -> list:
                 r"^(什么是|请(详细)?(解释|介绍|说明)|如何理解|为什么|详述|解释|介绍)\s*",
                 "", (question or "").strip())[:20]
         nodes.append(ChainNode(depth=depth, question=question or "",
-                               concept=concept, siblings=[]))
+                               concept=concept, siblings=[],
+                               summary=(layer_summary or "").strip()))
         cur = parent_qa_id
     nodes.reverse()  # 浅 -> 深
     return nodes
@@ -142,6 +147,20 @@ async def start(req: QAStartRequest):
     )
 
 
+# 就选段提问：drilldown 时暂存选中原文（进程内），stream 订阅时注入 prompt。
+# 不落库：selection 是一次性语境，重跑（刷新/reask）后失效是合理语义。
+# 同一子层的 stream 订阅有 inflight 互斥 + SessionManager 按 qa_id 缓存，
+# 暂存字典只需小容量，超量丢最旧。
+_SELECTION_CACHE: dict[str, str] = {}
+_SELECTION_CACHE_MAX = 64
+
+
+def _remember_selection(qa_id: str, selection: str) -> None:
+    if len(_SELECTION_CACHE) >= _SELECTION_CACHE_MAX:
+        _SELECTION_CACHE.pop(next(iter(_SELECTION_CACHE)), None)
+    _SELECTION_CACHE[qa_id] = selection
+
+
 @router.get("/{qa_id}/stream")
 async def stream(qa_id: str):
     """SSE 流式回推：answer_delta / status / concepts / done。"""
@@ -155,6 +174,10 @@ async def stream(qa_id: str):
         )
         if ctx_detail.get("context_text"):
             pipe.set_material_context(ctx_detail["context_text"])
+    # 就选段提问：注入 drilldown 时暂存的选中原文（一次性语境）
+    sel = _SELECTION_CACHE.pop(qa_id, None)
+    if sel:
+        pipe.set_selection(sel)
 
     async def event_gen():
         try:
@@ -228,6 +251,7 @@ async def drilldown(qa_id: str, req: DriftDownRequest):
     # _pipeline_for 读 DB 的 question,而 DB 里子层还没建。传父 question 作底,
     # 真正的子层 question 在 fork_child 里用 question 变量(干净版)落盘。
     pipe = await _pipeline_for(qa_id, parent["session_id"], question)
+    # 就选段提问：暂存选中原文，前端订阅 stream 时注入 prompt（一次性语境）
     try:
         new_pipe = await pipe.drill_down(
             parent_qa_id=qa_id, concept_id=req.concept_id, question=question
@@ -235,6 +259,8 @@ async def drilldown(qa_id: str, req: DriftDownRequest):
     except DepthLimitReached as e:
         # 膨胀降级：超 6 层 -> 标注已有概念，不新建推理
         raise HTTPException(status_code=422, detail=str(e))
+    if req.selection and req.selection.strip():
+        _remember_selection(new_pipe.qa_id, req.selection.strip())
     # material context 不在 drilldown 注入（pipeline 在 stream 路由会被重建，
     # 这里的 set 对 stream 无效）。子层 material_id 在 fork_child 已继承，
     # stream 路由按 material_id 现检索注入。这里只在 QAStepOut.context 回前端展示。
@@ -245,6 +271,24 @@ async def drilldown(qa_id: str, req: DriftDownRequest):
         status=QAStatus.GENERATING.value, version=1, depth=0,
         context=drill_context,
     )
+
+
+@router.post("/{qa_id}/reask")
+async def reask(qa_id: str, req: ReAskRequest):
+    """重问：修改问题并 in-place 重新生成本层回答（生成出错/不满意时用）。
+    只改问题清现场，不开新节点——树结构、session、material_id 全保留；
+    推理由前端重新订阅 stream 触发（run() 开头 reset_answer 幂等）。"""
+    question = (req.question or "").strip()
+    if not question:
+        raise HTTPException(status_code=422, detail="question is empty")
+    meta = await _load_meta(qa_id)
+    from sqlalchemy.exc import NoResultFound
+    try:
+        await repo.reask(qa_id, question)
+    except NoResultFound:
+        raise HTTPException(status_code=404, detail=f"qa_step {qa_id} not found")
+    return {"qa_id": qa_id, "question": question, "session_id": meta["session_id"],
+            "status": "generating"}
 
 
 @router.patch("/{qa_id}/checked")
@@ -260,6 +304,35 @@ async def set_checked(qa_id: str, checked: bool = Query(...)):
         if res.rowcount == 0:
             raise HTTPException(status_code=404, detail=f"qa_step {qa_id} not found")
     return {"qa_id": qa_id, "checked": checked}
+
+
+@router.delete("/{qa_id}")
+async def delete_qa_step(qa_id: str):
+    """删除一个探索层（含全部子层，级联）。
+
+    与 delete_session 同构的清理边界：
+    - qa_step 子树走 parent_qa_id 的 ondelete=CASCADE 递归删除；
+    - concept_edge.session_id 无外键（纯 UUID 列），按步骤所属 session 手动清
+      同源边——层的边数据与层共存亡，跨层共享的边不动；
+    - 概念节点本身保留（可复用资产，同"删足迹≠删材料"的边界）。
+    删根层（无 parent）等价于删整棵树。
+    """
+    from app.db import session_scope
+    from sqlalchemy import delete as sa_delete, select
+    from app.models.tables import QAStep as _QS, ConceptEdge as _CE
+    async with session_scope() as s:
+        row = (
+            await s.execute(
+                select(_QS.qa_id, _QS.session_id).where(_QS.qa_id == qa_id)
+            )
+        ).first()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"qa_step {qa_id} not found")
+        # 边没有 qa_id 维度,无法精确归属到某层,按会话粒度清理
+        await s.execute(sa_delete(_CE).where(_CE.session_id == row.session_id))
+        step = await s.get(_QS, qa_id)
+        await s.delete(step)
+    return {"qa_id": qa_id, "deleted": True}
 
 
 @router.post("/{qa_id}/rollback")

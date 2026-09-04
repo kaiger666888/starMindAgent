@@ -106,12 +106,17 @@ class QAStepPipeline:
         self.rt = QAStepRuntime(qa_id, session_id, question)
 
     def set_material_context(self, ctx: str | None) -> None:
-        """注入学习材料相关段落,推理 prompt 用,不污染 question 存库。
+        """转发学习材料相关段落,推理 prompt 用,不污染 question 存库。
 
         转发给 inference session -> InferenceClient,在 stream() 拼 prompt 时用。
         """
         if ctx and hasattr(self.inference, "set_material_context"):
             self.inference.set_material_context(ctx)
+
+    def set_selection(self, sel: str | None) -> None:
+        """就选段提问：转发用户选中的原文，推理 prompt 用，不污染 question 存库。"""
+        if sel and hasattr(self.inference, "set_selection"):
+            self.inference.set_selection(sel)
 
     def set_chain(self, chain) -> None:
         """注入概念链（下钻路径），推理 prompt 填概念链槽（防回答同质化）。

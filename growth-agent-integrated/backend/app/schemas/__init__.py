@@ -54,15 +54,23 @@ class DriftDownRequest(BaseModel):
     """点击概念下钻：fork 新 QAStep，挂 parent_qa_id。
 
     mode="ask"：针对性提问（问题直接作子层问题，不走概念名展开包装）。
+    selection：就选段提问时用户在当前页面选中的原文。短问题（如"为什么"）
+    要结合选中原文 + 页面总结理解，注入推理 prompt，不污染 question 存库。
     """
     concept_id: str
     question: Optional[str] = None  # 不给则用概念 canonical_name 作为问题
     mode: Optional[str] = None      # "ask" = 用户自由提问，跳过概念包装
+    selection: Optional[str] = None  # 就选段提问：选中的原文（推理语境，不落库）
 
 
 class RollbackRequest(BaseModel):
     """回上层：栈式回退，状态保留。"""
     target_qa_id: str  # 回到哪一层
+
+
+class ReAskRequest(BaseModel):
+    """重问：修改问题并重新生成本层回答（in-place，不开新节点）。"""
+    question: str
 
 
 # —— Concept 服务接口 ——

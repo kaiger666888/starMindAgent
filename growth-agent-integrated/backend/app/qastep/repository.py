@@ -113,6 +113,21 @@ class QAStepRepository:
                 f"UPDATE qa_step SET layer_summary = :s WHERE qa_id = {_uuid_cast(':id')}"
             ).bindparams(s=summary, id=qa_id))
 
+    async def reask(self, qa_id: str, question: str) -> None:
+        """重问：in-place 改问题并清空旧回答现场，stream 重订阅即重跑推理。
+        状态归位 generating：run() 在 sentinel 处走 generating->extracting 迁移，
+        停留在 waiting 会被 assert_transition 判非法。
+        概念/边不清理：旧概念节点与会话图共享，删边破坏已建立的概念图；
+        重跑后新一轮抽取落 extracted_concept_ids 自然覆盖。"""
+        async with session_scope() as s:
+            res = await s.execute(text(
+                "UPDATE qa_step SET question = :q, answer = '', answer_offset = 0, "
+                "status = 'generating', layer_summary = NULL, version = version + 1 "
+                f"WHERE qa_id = {_uuid_cast(':id')}"
+            ).bindparams(q=question, id=qa_id))
+            if res.rowcount == 0:
+                raise NoResultFound(qa_id)
+
     async def mark_browsed_not_drilled(self, qa_id: str) -> None:
         """需求六"放弃探索"：用户回上层未下钻，标记 browsed_not_drilled。
 
