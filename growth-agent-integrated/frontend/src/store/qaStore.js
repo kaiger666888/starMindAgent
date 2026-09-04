@@ -248,32 +248,80 @@ export async function toggleChecked(qaId) {
   }
 }
 
-// 勾选/取消概念已理解:遍历树,patch 所有节点 concepts 里该概念的 understood
-// (乐观更新,失败回滚)。概念汇总、树层进度条都会即时反映。
-export async function toggleConceptUnderstood(conceptId) {
-  if (!state.tree || !conceptId) return
-  const touched = []
-  const walk = (node) => {
-    for (const c of (node.concepts || [])) {
-      if (c.concept_id === conceptId) {
-        touched.push({ concept: c, prev: !!c.understood })
-        c.understood = !c.understood
-      }
-    }
-    for (const child of (node.children || [])) walk(child)
+// —— 阅读进度驱动的智能完成 ——
+// 人类阅读速度:中文约 420 字/分钟(7 字/秒),低于上限防快滚刷满。
+export const READ_SPEED_CPS = 7
+// 视觉中心位置与速度折算都达到 90% 即判定"读完",层自动完成。
+export const READ_DONE_THRESHOLD = 0.9
+
+// 上报某层阅读进度:position = 视觉中心相对正文顶部的已过比例(0-1,单调取最大),
+// visible = 页面是否前台可见。停留时长由 ReadingPane 心跳累计(秒)。
+// 双信号取 min:位置到了但没停留够(快滚)不算读完,反之亦然。
+// 进度达阈值:层自动标记完成(仅层 checked,不动概念——
+// 概念是否"已理解"与阅读进度无关,由下钻探索/复习卡片等用户行为表达)。
+export function reportReadProgress(qaId, { position, visible }) {
+  const node = findNode(qaId)
+  if (!node || !node.answer) return
+  const st = node.readProgress || { elapsed: 0, maxPos: 0 }
+  const maxPos = Math.max(st.maxPos, Math.min(Math.max(position || 0, 0), 1))
+  node.readProgress = {
+    ...st,
+    maxPos,
+    visible: !!visible,
+    lastBeat: Date.now(),
   }
-  walk(state.tree)
-  if (touched.length === 0) return
-  const next = touched[0].concept.understood
+  recomputeReadDone(qaId, node)
+  bumpTree()
+}
+
+// 心跳:每秒由 ReadingPane 调一次,前台可见才累计停留时长。
+export function tickReadTime(qaId, visible) {
+  const node = findNode(qaId)
+  if (!node) return
+  const st = node.readProgress || { elapsed: 0, maxPos: 0, lastBeat: Date.now() }
+  const now = Date.now()
+  // 单拍封顶 5s:正常 1s 心跳实报实记;定时器被节流(后台/省电)时
+  // 拍间隔拉长,按 5s 封顶补记,避免读着读着进度冻住
+  const delta = visible ? Math.min(Math.max(now - st.lastBeat, 0), 5000) / 1000 : 0
+  node.readProgress = { ...st, visible: !!visible, lastBeat: now, elapsed: st.elapsed + delta }
+  recomputeReadDone(qaId, node)
+  bumpTree()
+}
+
+// 双信号折算已读比例并判定完成(只前进不倒退;手动勾选优先)
+function recomputeReadDone(qaId, node) {
+  const st = node.readProgress
+  if (!st) return
+  const estChars = Math.max(answerCharCount(node.answer), 1)
+  const byTime = Math.min((st.elapsed * READ_SPEED_CPS) / estChars, 1)
+  const pct = Math.min(st.maxPos, byTime)
+  node.readPct = pct
+  if (pct >= READ_DONE_THRESHOLD && !node.checked && !node.autoDone) {
+    node.autoDone = true
+    markLayerDone(qaId, true)
+  }
+}
+
+// 层自动完成:阅读进度读满时仅置层 checked(落库),不动概念
+async function markLayerDone(qaId, done) {
+  const node = findNode(qaId)
+  if (!node) return
+  node.checked = done
   bumpTree()
   try {
-    const { setUnderstood } = await import('../api/client')
-    await setUnderstood(conceptId, next)
+    const { setChecked } = await import('../api/client')
+    await setChecked(qaId, done)
   } catch (err) {
-    for (const t of touched) t.concept.understood = t.prev
-    bumpTree()
-    console.error('[toggleConceptUnderstood] 失败:', err)
+    console.error('[markLayerDone] 落库失败:', err)
   }
+}
+
+// 正文有效字数:剥离 markdown 符号后的近似字数(中文正文 1 字 1 计)
+function answerCharCount(text) {
+  return (text || '')
+    .replace(/[#*_>`~\[\]()!|:\-]/g, '')
+    .replace(/\s+/g, '')
+    .length
 }
 
 // 记录回上层时"上次看的概念"
@@ -292,6 +340,69 @@ export function popToLayer(qaId) {
     set({ currentPath: path, inflight: null })
     pushHistory(qaId)
   }
+}
+
+// 删除层：后端级联删子层成功后本地剪枝。
+// - 删的是根：整棵树清空（回提问空态）
+// - 删的是路径上的层（含当前层）：currentPath 收回到被删层的父层
+// - 浏览历史里被删子树的 qa_id 一并剔除（防前进/后退跳到已删层）
+export function removeLayer(qaId) {
+  if (!state.tree) return
+  if (state.tree.qa_id === qaId) {
+    set({ tree: null, currentPath: [], inflight: null, history: [], historyIdx: -1 })
+    return
+  }
+  // 从父节点的 children 里摘除
+  const walk = (node) => {
+    for (const child of (node.children || [])) {
+      if (child.qa_id === qaId) {
+        node.children = node.children.filter((c) => c.qa_id !== qaId)
+        return true
+      }
+      if (walk(child)) return true
+    }
+    return false
+  }
+  if (!walk(state.tree)) return
+  // 被删子树内的 qa_id 集合（剪枝后已不可达,按 currentPath 是否含该层判断即可）
+  const removedFromPath = state.currentPath.includes(qaId)
+  if (removedFromPath) {
+    // 收回到父层:currentPath 截到被删层的前一项
+    const idx = state.currentPath.indexOf(qaId)
+    const nextPath = state.currentPath.slice(0, Math.max(idx, 1))
+    set({ currentPath: nextPath, inflight: null })
+  }
+  // 历史剔除被删层及其之后到不了的位置——历史是线性序列,
+  // 被删 qa_id 直接从 history 里去掉,指针重排
+  const nh = state.history.filter((id) => id !== qaId)
+  const cur = state.currentPath[state.currentPath.length - 1]
+  let nIdx = nh.lastIndexOf(cur)
+  if (nIdx === -1) nIdx = Math.min(state.historyIdx, nh.length - 1)
+  set({ history: nh, historyIdx: nIdx })
+  bumpTree()
+}
+
+// 重问：本地重置该层现场（新问题 + 清回答/概念/候选）并置 inflight。
+// 后端 reask 端点改库由调用方负责；之后调用方重新订阅 stream 收新流。
+export function reaskLayer(qaId, newQuestion) {
+  const node = findNode(qaId)
+  if (!node) return
+  Object.assign(node, {
+    question: newQuestion,
+    answer: '',
+    concepts: [],
+    candidates: [],
+    layer_summary: '',
+    searchSources: null,
+    error: null,
+    readProgress: null,
+    readPct: null,
+    autoDone: false,
+    loading: true,
+    status: 'generating',
+  })
+  bumpTree()
+  set({ inflight: qaId })
 }
 
 // 翻页:后退/前进——在浏览历史里移动(浏览器式),与树导航解耦

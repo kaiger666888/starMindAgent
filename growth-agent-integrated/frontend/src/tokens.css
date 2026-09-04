@@ -246,6 +246,8 @@
 .readerControls:hover { opacity: 1 !important; }
 .readerControls:focus-within { opacity: 1 !important; }
 .copyBtn:hover { opacity: 1 !important; color: var(--settled); border-color: var(--settled); }
+/* 删除层按钮:hover 浮现(danger 色阶留给确认态) */
+.deleteLayerBtn:hover { opacity: 1 !important; }
 
 /* 树节点"问"入口:hover 行时显形(inline style 无法表达 hover) */
 .treeNode:hover .treeAskBtn,
@@ -253,3 +255,8 @@
 .treeAskBtn:hover { border-color: var(--active); background: var(--active-soft); }
 /* 层头部"追问"按钮:hover 墨蓝化 */
 .askBtn:hover { color: var(--active); border-color: var(--active); }
+
+/* 概念汇总"卡"入口:hover 条目时显形(与树"问"章同构) */
+.conceptRow:hover .conceptCardBtn,
+.conceptCardBtn:focus-visible { opacity: 1; }
+.conceptCardBtn:hover { border-color: var(--active); background: var(--active-soft); }

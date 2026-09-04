@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react'
 import * as api from '../api/client'
-import { useStore, updateLayer, clearInflight, setLastViewed, guardAction, goBack, goForward, findNode, getPathNodes, getState } from '../store/qaStore'
+import { useStore, updateLayer, clearInflight, setLastViewed, guardAction, goBack, goForward, findNode, getPathNodes, getState, reportReadProgress, tickReadTime, reaskLayer, removeLayer } from '../store/qaStore'
 import { renderMarkdown } from './markdownRenderer.jsx'
 import ReaderControls from './ReaderControls'
 import AskDialog from './AskDialog'
@@ -153,9 +153,33 @@ function ReadingLayer({ layer, depth, inflight, canBack, canForward, historyIdx,
 
   // 复制原文 + toast 反馈
   const [copied, setCopied] = useState(false)
+  // 删除层：两段式确认（点一次变"确认删除"再点才删），与档案删足迹同构
+  const [confirmingDel, setConfirmingDel] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   // 针对性提问（页边追问）：就选段/就这层发问，问题长成探索树子层
   const [askAnchor, setAskAnchor] = useState(null)   // { kind, text, label } | null（null=关）
   const [asking, setAsking] = useState(false)
+
+  // 确认删除态 3s 未再点自动弹回（防误触后悬停）
+  useEffect(() => {
+    if (!confirmingDel) return
+    const id = setTimeout(() => setConfirmingDel(false), 3000)
+    return () => clearTimeout(id)
+  }, [confirmingDel])
+
+  async function onDeleteLayer() {
+    if (!confirmingDel) { setConfirmingDel(true); return }
+    setDeleting(true)
+    try {
+      await api.deleteLayer(layer.qa_id)
+      removeLayer(layer.qa_id)
+    } catch (err) {
+      console.error('[onDeleteLayer] 删除失败:', err)
+      setConfirmingDel(false)
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   // 选中气泡（InlineAnswer 内嵌组件）经事件总线开提问框
   useEffect(() => {
@@ -163,6 +187,51 @@ function ReadingLayer({ layer, depth, inflight, canBack, canForward, historyIdx,
     window.addEventListener('starmind:askSelection', onAskSelection)
     return () => window.removeEventListener('starmind:askSelection', onAskSelection)
   }, [])
+
+  // —— 阅读进度采集：视觉中心位置 + 停留时长,驱动左栏智能完成 ——
+  // 视觉中心 = 视口中线在正文里的位置(人类阅读时视线停留最多的区域);
+  // 滚动时上报;1s 心跳累计前台停留时长(速度折算防快滚刷满)。
+  const scrollAreaRef = useRef(null)
+  const articleTopRef = useRef(0)   // 正文顶部相对滚动区的偏移(滚动后重算)
+  const docVisibleRef = useRef(!document.hidden)
+
+  const reportCenter = () => {
+    const area = scrollAreaRef.current
+    if (!area) return
+    const wrap = area.firstElementChild
+    if (!wrap) return
+    const areaRect = area.getBoundingClientRect()
+    const wrapRect = wrap.getBoundingClientRect()
+    const centerY = areaRect.top + areaRect.height / 2
+    // 视觉中心可达的最深处 = 正文总高 - 半个视口(滚到底时中线位置),
+    // 按它归一化:滚到底 = 100%,否则短文/末页永远差一截读不满
+    const reachable = wrapRect.height - areaRect.height / 2
+    if (reachable <= 0) return
+    const pos = Math.min(Math.max((centerY - wrapRect.top) / reachable, 0), 1)
+    reportReadProgress(layer.qa_id, { position: pos, visible: docVisibleRef.current })
+  }
+
+  useEffect(() => {
+    const area = scrollAreaRef.current
+    if (!area) return
+    // 切层重置视觉中心基线;流式未完(loading)不采集——正文还在长
+    if (layer.loading) return
+    reportCenter()
+    const onScroll = () => reportCenter()
+    area.addEventListener('scroll', onScroll, { passive: true })
+    // 心跳:1s 累计停留时长,前台不可见时不计
+    const beat = setInterval(() => {
+      tickReadTime(layer.qa_id, docVisibleRef.current)
+    }, 1000)
+    const onVis = () => { docVisibleRef.current = !document.hidden }
+    document.addEventListener('visibilitychange', onVis)
+    return () => {
+      area.removeEventListener('scroll', onScroll)
+      clearInterval(beat)
+      document.removeEventListener('visibilitychange', onVis)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layer.qa_id, layer.loading, layer.answer])
 
   // 子层 SSE 订阅（onDrill / onAsk 共用：drilldown -> pushLayer -> subscribe）
   function subscribeChild(childQaId) {
@@ -181,16 +250,44 @@ function ReadingLayer({ layer, depth, inflight, canBack, canForward, historyIdx,
       search_sources: (ev) => updateLayer(childQaId, { searchSources: ev.sources }),
       layer_summary: (ev) => updateLayer(childQaId, { layer_summary: ev.layer_summary }),
       done: () => { updateLayer(childQaId, { loading: false }); clearInflight() },
-      error: () => { updateLayer(childQaId, { loading: false }); clearInflight() },
+      error: (ev) => {
+        updateLayer(childQaId, { loading: false, error: ev.message || '生成失败' })
+        clearInflight()
+      },
     })
   }
 
-  // 提问：mode=ask 走 drilldown 链路（问题原样作子层 question，不概念包装）
-  async function onAskSubmit(question) {
+  // 重问：改问题后 in-place 重新生成本层（生成出错/不满意时用）。
+  // 成功路径：后端改库 -> 本地重置现场 -> 重订阅 stream 收新流。
+  // 问题没改（原样重试）时跳过后端调用，直接重订阅——run() 开头
+  // reset_answer 幂等，重订阅本身就是一次重跑。
+  async function onReaskSubmit(question) {
     if (!guardAction(layer.qa_id)) return
     setAsking(true)
     try {
-      const child = await api.drillDown(layer.qa_id, `local_ask_${Date.now()}`, question, 'ask')
+      if (question !== layer.question) {
+        await api.reask(layer.qa_id, question)
+      }
+      reaskLayer(layer.qa_id, question)
+      subscribeChild(layer.qa_id)
+      setAskAnchor(null)
+    } catch (err) {
+      console.error('[onReaskSubmit] 重问失败:', err)
+      clearInflight()
+    } finally {
+      setAsking(false)
+    }
+  }
+
+  // 提问：mode=ask 走 drilldown 链路（问题原样作子层 question，不概念包装）。
+  // 就选段提问：selection 带选中原文，后端注入推理 prompt——用户的短问题
+  // （如"为什么"）要结合选中的句子理解，而不是孤立回答三个字。
+  async function onAskSubmit(question) {
+    if (!guardAction(layer.qa_id)) return
+    setAsking(true)
+    const selection = askAnchor?.kind === 'selection' ? askAnchor.text : null
+    try {
+      const child = await api.drillDown(layer.qa_id, `local_ask_${Date.now()}`, question, 'ask', selection)
       const { pushLayer } = await import('../store/qaStore')
       pushLayer({
         qa_id: child.qa_id, question: child.question || question, answer: '',
@@ -238,7 +335,7 @@ function ReadingLayer({ layer, depth, inflight, canBack, canForward, historyIdx,
         open={!!askAnchor}
         anchor={askAnchor}
         submitting={asking}
-        onSubmit={onAskSubmit}
+        onSubmit={askAnchor?.kind === 'reask' ? onReaskSubmit : onAskSubmit}
         onClose={() => setAskAnchor(null)}
       />
       {copied && (
@@ -269,7 +366,7 @@ function ReadingLayer({ layer, depth, inflight, canBack, canForward, historyIdx,
         <span style={styles.topBarHint}>Alt+←/→ 翻页 · 最多记 30 步</span>
         <ReaderControls />
       </div>
-      <div style={styles.scrollArea}>
+      <div style={styles.scrollArea} ref={scrollAreaRef}>
       <div style={styles.scrollWrap}>
         {/* 层标签 + 生长茎(签名元素) */}
         <header style={styles.layerHeader}>
@@ -279,6 +376,14 @@ function ReadingLayer({ layer, depth, inflight, canBack, canForward, historyIdx,
           <div style={styles.layerMeta}>
             <h1 style={styles.layerQ}>{layer.question}</h1>
             {layer.loading && <span style={styles.loadingDot} title="生成中" />}
+            {!layer.loading && (
+              <button
+                style={styles.reaskBtn}
+                onClick={() => setAskAnchor({ kind: 'reask', text: layer.question })}
+                disabled={!!inflight && inflight !== layer.qa_id}
+                title="修改问题或直接重新生成本层回答"
+              >重问</button>
+            )}
             {layer.answer && (
               <button
                 style={styles.askBtn}
@@ -296,6 +401,17 @@ function ReadingLayer({ layer, depth, inflight, canBack, canForward, historyIdx,
                 aria-label="复制原文"
               >{copied ? '已复制' : '复制'}</button>
             )}
+            {/* 删除层:两段式确认,确认后连子层级联删(与档案删足迹同构) */}
+            {!layer.loading && (
+              <button
+                className="deleteLayerBtn"
+                style={{ ...styles.deleteBtn, ...(confirmingDel ? styles.deleteBtnConfirm : null) }}
+                onClick={onDeleteLayer}
+                disabled={deleting || (!!inflight && inflight !== layer.qa_id)}
+                title={confirmingDel ? '再点一次确认删除（含全部子层）' : '删除这一层（含全部子层）'}
+                aria-label={confirmingDel ? '确认删除' : '删除这一层'}
+              >{deleting ? '删除中…' : (confirmingDel ? '确认删除' : '删除')}</button>
+            )}
           </div>
         </header>
 
@@ -308,10 +424,21 @@ function ReadingLayer({ layer, depth, inflight, canBack, canForward, historyIdx,
         <article style={styles.answer}>
           {layer.answer ? (
             <InlineAnswer answer={layer.answer} concepts={concepts} layer={layer} inflight={inflight} />
-          ) : (
+          ) : layer.loading ? (
             <div style={styles.generating}>
-              {layer.loading ? <WaitingHint /> : '（空回答）'}
+              <WaitingHint />
             </div>
+          ) : layer.error ? (
+            <div style={styles.errorBlock} role="alert">
+              <div style={styles.errorText}>这层生成失败：{layer.error}</div>
+              <div style={styles.errorActions}>
+                <button style={styles.errorRetryBtn} onClick={() => setAskAnchor({ kind: 'reask', text: layer.question })}>
+                  修改问题重试
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div style={styles.generating}>（空回答）</div>
           )}
         </article>
 
@@ -494,8 +621,27 @@ function InlineAnswer({ answer, concepts, layer, inflight }) {
     })
   }
 
-  async function onCreateAndDrill(text) {
-    if (!guardAction(layer.qa_id)) return
+  // 存为记忆卡片：选段 + 所在层问答喂给后端 LLM 总结成卡（第二天复习队列见）
+  const [cardState, setCardState] = useState(null) // null | 'saving' | 'saved' | 'error'
+
+  async function onSaveAsCard(text) {
+    setCardState('saving')
+    try {
+      const uid = localStorage.getItem('starMindAgent.uid') || 'default'
+      await api.cardFromSelection(uid, text, layer.qa_id, layer.last_viewed_concept || null, layer.question)
+      setCardState('saved')
+      setTimeout(() => setCardState(null), 2500)
+    } catch (err) {
+      console.error('[onSaveAsCard] 建卡失败:', err)
+      setCardState('error')
+      setTimeout(() => setCardState(null), 3000)
+    } finally {
+      setSelection(null)
+      window.getSelection()?.removeAllRanges()
+    }
+  }
+
+  async function onCreateAndDrill(text) {    if (!guardAction(layer.qa_id)) return
     setLastViewed(layer.qa_id, null)
     const localId = `local_${Date.now()}`
     try {
@@ -526,7 +672,10 @@ function InlineAnswer({ answer, concepts, layer, inflight }) {
         search_sources: (ev) => updateLayer(child.qa_id, { searchSources: ev.sources }),
         layer_summary: (ev) => updateLayer(child.qa_id, { layer_summary: ev.layer_summary }),
         done: () => { updateLayer(child.qa_id, { loading: false }); clearInflight() },
-        error: () => { updateLayer(child.qa_id, { loading: false }); clearInflight() },
+        error: (ev) => {
+          updateLayer(child.qa_id, { loading: false, error: ev.message || '生成失败' })
+          clearInflight()
+        },
       })
     } catch (err) {
       console.error('[onCreateAndDrill] 下钻失败:', err)
@@ -559,6 +708,14 @@ function InlineAnswer({ answer, concepts, layer, inflight }) {
             title="针对选段提出问题，问题长成子层"
           >
             就选段提问
+          </button>
+          <button
+            style={{ ...styles.popoverBtn, ...styles.popoverBtnCard }}
+            onClick={() => onSaveAsCard(selection.text)}
+            disabled={cardState === 'saving'}
+            title="总结成记忆卡片，明天在复习页盲 check"
+          >
+            {cardState === 'saving' ? '总结中…' : cardState === 'saved' ? '已存 ✓' : cardState === 'error' ? '失败，重试' : '存为卡片'}
           </button>
         </div>
       )}
@@ -611,7 +768,10 @@ function ConceptInline({ concept, inflight, layer, inline }) {
         search_sources: (ev) => updateLayer(child.qa_id, { searchSources: ev.sources }),
         layer_summary: (ev) => updateLayer(child.qa_id, { layer_summary: ev.layer_summary }),
         done: () => { updateLayer(child.qa_id, { loading: false }); clearInflight() },
-        error: () => { updateLayer(child.qa_id, { loading: false }); clearInflight() },
+        error: (ev) => {
+          updateLayer(child.qa_id, { loading: false, error: ev.message || '生成失败' })
+          clearInflight()
+        },
       })
     } catch (err) {
       console.error('[onDrill] 下钻失败:', err)
@@ -838,6 +998,18 @@ const styles = {
     color: 'var(--settled)', border: '1px solid var(--settled)', opacity: 1,
     background: 'var(--settled-soft)',
   },
+  // 删除层按钮:与复制同构的 mono 小字,平时低调半隐,确认态 danger 实底
+  deleteBtn: {
+    flexShrink: 0, padding: '3px 10px',
+    border: '1px solid var(--rule)', borderRadius: 'var(--r-sm)',
+    background: 'var(--paper)', color: 'var(--ink-faint)',
+    fontFamily: 'var(--mono)', fontSize: 10.5, cursor: 'pointer',
+    letterSpacing: '0.04em', opacity: 0.5, transition: 'all 0.15s',
+  },
+  deleteBtnConfirm: {
+    color: 'var(--paper)', border: '1px solid var(--danger)',
+    background: 'var(--danger)', opacity: 1,
+  },
   // 复制成功 toast:顶部居中浮现
   toastWrap: {
     position: 'fixed', top: 72, left: 0, right: 0, zIndex: 50,
@@ -994,11 +1166,39 @@ const styles = {
     background: 'transparent', color: 'var(--paper)',
     border: '1px solid rgba(250,248,243,0.45)',
   },
+  // 选中气泡里的"存为卡片"按钮：深绿（学习完成信号色）描边幽灵态--
+  // 与"提问"墨蓝、"标概念"实心区分，卡片是"记进长期记忆"的动作
+  popoverBtnCard: {
+    background: 'transparent', color: 'var(--paper)',
+    border: '1px solid rgba(250,248,243,0.45)',
+  },
   // 层头部"追问"按钮：与"复制"同级的轻量文字钮，衬线体手记气质
   askBtn: {
     background: 'none', border: '1px solid var(--rule)', color: 'var(--ink-soft)',
     padding: '3px 10px', fontSize: 11, cursor: 'pointer', borderRadius: 'var(--r-sm)',
     fontFamily: 'var(--serif)', letterSpacing: '0.04em', transition: 'all 0.15s',
+  },
+  // 层头部"重问"按钮：与"追问"同构，虚线边框暗示"可以改了重来"
+  reaskBtn: {
+    background: 'none', border: '1px dashed var(--rule)', color: 'var(--ink-faint)',
+    padding: '3px 10px', fontSize: 11, cursor: 'pointer', borderRadius: 'var(--r-sm)',
+    fontFamily: 'var(--serif)', letterSpacing: '0.04em', transition: 'all 0.15s',
+  },
+  // 生成失败块：danger 色系轻底，给出错误原因 + 修改重试入口
+  errorBlock: {
+    display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-start',
+    padding: '14px 16px', background: 'var(--danger-soft)',
+    borderLeft: '3px solid var(--danger)', borderRadius: 'var(--r-md)',
+  },
+  errorText: {
+    fontFamily: 'var(--serif)', fontSize: 13.5, color: 'var(--danger)',
+    lineHeight: 1.7,
+  },
+  errorActions: { display: 'flex', gap: 8 },
+  errorRetryBtn: {
+    background: 'var(--danger)', color: '#fff', border: 'none',
+    padding: '6px 14px', fontSize: 12, cursor: 'pointer', borderRadius: 'var(--r-sm)',
+    fontFamily: 'var(--sans)', fontWeight: 500, transition: 'opacity 0.15s',
   },
   hint: {
     marginTop: 28, fontSize: 11, color: 'var(--ink-faint)', textAlign: 'center',
