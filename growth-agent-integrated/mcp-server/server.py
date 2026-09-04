@@ -1,6 +1,6 @@
 """starMindAgent MCP Server（stdio）。
 
-把 sMA 后端 FastAPI 路由映射成 MCP tools，使 Claude Code 等 agent 可以：
+把 sMA 后端 FastAPI 路由映射成 MCP tools，使 ZCode 等 agent 可以：
 - import_material: 导入学习材料（markdown）建 L0 根 + 概念抽取
 - ask: 提问（SSE 流收口成完整回答 + 概念列表）
 - drilldown: 概念下钻
@@ -11,9 +11,10 @@
 
 后端地址用环境变量 SMA_BACKEND 覆盖（默认 http://127.0.0.1:8000）。
 
-Claude Code 接入:
-  claude mcp add starmind -- C:/Kais_Projects/Git_Projects/Github/starMindAgent/growth-agent-integrated/mcp-server/server.py
-（Windows 下也可 `claude mcp add starmind -- python <绝对路径>/server.py`）
+ZCode 接入（工作区级，仓库根 .zcode/config.json，已配置）:
+  mcp.servers.starmind = stdio server，command 用 python 绝对路径，
+  args 指向本文件绝对路径（ZCode 不展开模板变量，必须绝对路径），
+  timeoutMs=620000（ask 走 SSE 流最长 600s，必须盖过 ZCode 默认 30s）。
 """
 from __future__ import annotations
 
@@ -254,6 +255,47 @@ async def learning_profile(user_id: str = DEFAULT_USER, refresh: bool = False) -
 async def list_sessions(user_id: str = DEFAULT_USER) -> str:
     """列出学习者的所有学习会话（session_id / 领域 / 问题数 / 最近问题）。"""
     out = await _request("GET", f"/memory/users/{user_id}/sessions")
+    return json.dumps(out, ensure_ascii=False)
+
+
+@mcp.tool()
+async def review_cards(user_id: str = DEFAULT_USER) -> str:
+    """查记忆卡片复习概况：今日到期队列 + 学习进度（streak/归档数）。
+
+    返回 progress（total/active/due_now/archived/streak_dist）和 due 队列
+    （每张卡的 question / streak / due_at）。卡片连续 3 天自评「理解」才归档。
+
+    Args:
+        user_id: 学习者标识
+    """
+    progress = await _request("GET", f"/memory/cards/users/{user_id}/progress", timeout=30.0)
+    due = await _request("GET", f"/memory/cards/users/{user_id}/due", timeout=30.0)
+    # due 里答案先不给（盲 check 语义），只留问题
+    if isinstance(due, list):
+        for c in due:
+            c.pop("answer", None)
+            c.pop("source_answer", None)
+    return json.dumps({"progress": progress, "due": due}, ensure_ascii=False)
+
+
+@mcp.tool()
+async def grade_card(card_id: str, grade: str, user_id: str = DEFAULT_USER) -> str:
+    """给一张记忆卡片盲 check 评分（模拟学习者的第二天自评）。
+
+    grade 三选一：
+    - understood: 记住了（streak+1，连续 3 天归档）
+    - forgot: 忘记了（streak 清零，明天再到期）
+    - retry: 明天再试（streak 清零，明天再到期）
+
+    Args:
+        card_id: 卡片 id（review_cards 的 due 队列里有）
+        grade: understood / forgot / retry
+        user_id: 学习者标识
+    """
+    if grade not in ("understood", "forgot", "retry"):
+        return json.dumps({"error": "grade must be understood/forgot/retry"}, ensure_ascii=False)
+    out = await _request("POST", f"/memory/cards/{card_id}/grade",
+                         json_body={"grade": grade}, timeout=30.0)
     return json.dumps(out, ensure_ascii=False)
 
 
