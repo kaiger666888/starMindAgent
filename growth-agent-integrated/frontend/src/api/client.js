@@ -30,11 +30,12 @@ export function subscribeStream(qaId, handlers) {
 }
 
 // 出口1：点击概念下钻（mode="ask" = 针对性提问，问题原样作子层，不走概念包装）
-export async function drillDown(parentQaId, conceptId, question, mode) {
+// selection：就选段提问时用户选中的原文（推理语境注入，不落库）
+export async function drillDown(parentQaId, conceptId, question, mode, selection) {
   const res = await fetch(`${BASE}/qa/${parentQaId}/drilldown`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ concept_id: conceptId, question, mode }),
+    body: JSON.stringify({ concept_id: conceptId, question, mode, selection }),
   })
   if (!res.ok) throw new Error(`drilldown failed: ${res.status}`)
   return res.json()
@@ -48,6 +49,17 @@ export async function rollback(targetQaId) {
     body: JSON.stringify({ target_qa_id: targetQaId }),
   })
   if (!res.ok) throw new Error(`rollback failed: ${res.status}`)
+  return res.json()
+}
+
+// 重问：修改问题并 in-place 重新生成本层回答（生成出错/不满意时用）
+export async function reask(qaId, question) {
+  const res = await fetch(`${BASE}/qa/${qaId}/reask`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question }),
+  })
+  if (!res.ok) throw new Error(`reask failed: ${res.status}`)
   return res.json()
 }
 
@@ -129,6 +141,13 @@ export async function correctAnnotation(qaId, conceptId, action) {
 export async function setChecked(qaId, checked) {
   const res = await fetch(`${BASE}/qa/${qaId}/checked?checked=${!!checked}`, { method: 'PATCH' })
   if (!res.ok) throw new Error(`set checked failed: ${res.status}`)
+  return res.json()
+}
+
+// 删除一个探索层（后端级联删全部子层）
+export async function deleteLayer(qaId) {
+  const res = await fetch(`${BASE}/qa/${qaId}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`delete layer failed: ${res.status}`)
   return res.json()
 }
 

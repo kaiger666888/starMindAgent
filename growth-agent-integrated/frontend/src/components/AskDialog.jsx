@@ -21,14 +21,16 @@ export default function AskDialog({
   const inputRef = useRef(null)
   const lastFocusRef = useRef(null)
 
-  // 打开时：清空旧文、聚焦输入框、记住来源焦点（关闭时归还）
+  // 打开时：聚焦输入框、记住来源焦点（关闭时归还）。
+  // 追问模式清空旧文；重问模式（kind='reask'）预填原问题供修改
   useEffect(() => {
     if (open) {
-      setText('')
+      setText(anchor?.kind === 'reask' ? (anchor.text || '') : '')
       lastFocusRef.current = document.activeElement
       // 等对话框挂载后再聚焦
       requestAnimationFrame(() => inputRef.current?.focus())
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
   // Esc 关闭（在输入框外按也生效）
@@ -56,8 +58,10 @@ export default function AskDialog({
     }
   }
 
-  const quote = anchor?.text || ''
-  const quoteLabel = anchor?.kind === 'selection' ? '就选段追问' : '就这层追问'
+  const quote = anchor?.kind === 'reask' ? '' : (anchor?.text || '')
+  const isReask = anchor?.kind === 'reask'
+  const quoteLabel = isReask ? '修改问题 · 重新生成'
+    : anchor?.kind === 'selection' ? '就选段追问' : '就这层追问'
 
   return (
     <div
@@ -89,20 +93,20 @@ export default function AskDialog({
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onKeyDown}
-          placeholder="针对上面这段，你想问什么？"
+          placeholder={isReask ? '修改问题后重新生成本层回答' : '针对上面这段，你想问什么？'}
           rows={3}
           disabled={submitting}
-          aria-label="追问内容"
+          aria-label={isReask ? '修改后的问题' : '追问内容'}
         />
 
         <div style={styles.foot}>
-          <span style={styles.tip}>Enter 发送 · Shift+Enter 换行</span>
+          <span style={styles.tip}>{isReask ? '原回答会被替换 · 子层保留' : 'Enter 发送 · Shift+Enter 换行'}</span>
           <button
             style={{ ...styles.askBtn, ...(submitting ? styles.askBtnBusy : {}) }}
             onClick={submit}
             disabled={!text.trim() || submitting}
           >
-            {submitting ? '生长中…' : '提问 · 长成子层'}
+            {submitting ? '生长中…' : isReask ? '重新生成' : '提问 · 长成子层'}
           </button>
         </div>
       </div>

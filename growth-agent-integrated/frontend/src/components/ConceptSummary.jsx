@@ -1,10 +1,13 @@
 // 概念汇总面板 —— 左侧 TreeView 树导航下方
 // 收集当前会话所有概念(去重),按 explore_count 着色 + 完成度进度条
 // 点击概念:派发 starmind:startFromConcept 事件,跳到探索视图预填
+// 每条概念可生成记忆卡片(复用后端 from-selection 建卡链路)
 //
 // 完成度映射:explore_count 0→10% 1→30% 2→60% 3→85% 4+→95% understood→100%
 
-import { useStore, toggleConceptUnderstood } from '../store/qaStore'
+import React, { useState } from 'react'
+import { useStore, findNode } from '../store/qaStore'
+import * as api from '../api/client'
 
 // 完成度百分比
 function completionPct(c) {
@@ -28,7 +31,8 @@ function tierColor(c) {
   return 'var(--tier-red-3)'
 }
 
-// 遍历树收集所有概念,按 concept_id 去重(合并 explore_count)
+// 遍历树收集所有概念,按 concept_id 去重(合并 explore_count);
+// 同时记录概念最早出现的层(qa_id + 该层问题),作为建卡上下文
 function collectConcepts(node, acc = {}) {
   if (!node) return acc
   for (const c of (node.concepts || [])) {
@@ -39,7 +43,7 @@ function collectConcepts(node, acc = {}) {
       acc[id].explore_count = Math.max(acc[id].explore_count || 0, c.explore_count || 0)
       if (c.understood) acc[id].understood = true
     } else {
-      acc[id] = { ...c }
+      acc[id] = { ...c, sourceQaId: node.qa_id, sourceQuestion: node.question }
     }
   }
   for (const child of (node.children || [])) {
@@ -58,6 +62,9 @@ export default function ConceptSummary() {
     ? concepts.reduce((s, c) => s + completionPct(c), 0) / concepts.length
     : 0
 
+  // 建卡状态:concept_id -> 'creating' | 'done'(入复习队列后短暂显示钩)
+  const [cardState, setCardState] = useState({})
+
   if (concepts.length === 0) return null
 
   function onJump(concept) {
@@ -65,6 +72,33 @@ export default function ConceptSummary() {
     window.dispatchEvent(new CustomEvent('starmind:startFromConcept', {
       detail: concept.canonical_name || concept.name,
     }))
+  }
+
+  // 生成记忆卡片:概念所在层正文作素材,层 QA 作背景喂给建卡 LLM
+  async function onMakeCard(concept) {
+    if (!concept.concept_id || cardState[concept.concept_id]) return
+    setCardState((s) => ({ ...s, [concept.concept_id]: 'creating' }))
+    try {
+      const uid = localStorage.getItem('starMindAgent.uid') || 'default'
+      const node = findNode(concept.sourceQaId)
+      const selected = (node?.answer || concept.canonical_name || concept.name || '').slice(0, 2000)
+      await api.cardFromSelection(uid, selected, concept.sourceQaId, concept.concept_id, concept.sourceQuestion)
+      setCardState((s) => ({ ...s, [concept.concept_id]: 'done' }))
+      setTimeout(() => {
+        setCardState((s) => {
+          const next = { ...s }
+          delete next[concept.concept_id]
+          return next
+        })
+      }, 2200)
+    } catch (err) {
+      console.error('[onMakeCard] 建卡失败:', err)
+      setCardState((s) => {
+        const next = { ...s }
+        delete next[concept.concept_id]
+        return next
+      })
+    }
   }
 
   return (
@@ -86,19 +120,12 @@ export default function ConceptSummary() {
           const color = tierColor(c)
           const name = c.canonical_name || c.name
           const understood = !!c.understood
+          const cst = cardState[c.concept_id]
           // 进度条式背景:深绿从左向右按完成度增长,understood 满格(与树条目同构)
           const alpha = understood ? 0.32 : 0.18
           const bg = `linear-gradient(to right, rgba(47,107,79,${alpha}) 0%, rgba(47,107,79,${alpha}) ${pct * 100}%, transparent ${pct * 100}%)`
           return (
-            <div key={c.concept_id} style={{ display: 'flex', alignItems: 'stretch' }}>
-              <button
-                aria-label={understood ? '取消已理解' : '标记已理解'}
-                style={{ ...styles.check, ...(understood ? styles.checkDone : null) }}
-                onClick={() => toggleConceptUnderstood(c.concept_id)}
-                title={understood ? '已理解(点击取消)' : '标记已理解'}
-              >
-                {understood && <svg width="9" height="8" viewBox="0 0 10 8" aria-hidden="true"><polyline points="1,4 3.8,6.5 9,1" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>}
-              </button>
+            <div key={c.concept_id} className="conceptRow" style={{ display: 'flex', alignItems: 'stretch' }}>
               <button
                 style={{ ...styles.chip, background: bg }}
                 onClick={() => onJump(c)}
@@ -108,6 +135,17 @@ export default function ConceptSummary() {
                 <span style={styles.miniBar}>
                   <span style={{ ...styles.miniFill, width: `${pct * 100}%`, background: color }} />
                 </span>
+              </button>
+              {/* 生成卡片:概念入复习队列(hover 露出,与树条目「问」章同构) */}
+              <button
+                className="conceptCardBtn"
+                style={{ ...styles.cardBtn, ...(cst ? styles.cardBtnBusy : null) }}
+                onClick={() => onMakeCard(c)}
+                disabled={!!cst}
+                aria-label={`为${name}生成卡片`}
+                title={cst === 'done' ? '已入复习队列' : '生成复习卡片'}
+              >
+                {cst === 'creating' ? '…' : cst === 'done' ? '✓' : '卡'}
               </button>
             </div>
           )
@@ -139,15 +177,17 @@ const styles = {
   overallPct: { fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--ink-soft)', minWidth: 28, textAlign: 'right' },
   // 概念 list
   list: { display: 'flex', flexDirection: 'column', gap: 4 },
-  // 概念理解 check 框：与 TreeView 行首 check 同构（深绿填充 + 白对钩）
-  check: {
-    width: 14, height: 14, flexShrink: 0, alignSelf: 'center', marginRight: 4,
+  // 生成卡片入口:小方章「卡」,hover 露出(次级动作不常驻占宽)
+  cardBtn: {
+    width: 20, flexShrink: 0, alignSelf: 'center', marginLeft: 4,
     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    background: 'var(--paper)', border: '1px solid var(--rule)',
-    borderRadius: 'var(--r-sm)', cursor: 'pointer', padding: 0,
-    transition: 'background 0.2s, border-color 0.2s',
+    background: 'transparent', border: '1px solid transparent',
+    color: 'var(--active)', borderRadius: 'var(--r-sm)',
+    fontFamily: 'var(--serif)', fontSize: 11, fontWeight: 600,
+    cursor: 'pointer', opacity: 0,
+    transition: 'opacity 0.15s, border-color 0.15s',
   },
-  checkDone: { background: 'var(--done)', borderColor: 'var(--done)' },
+  cardBtnBusy: { opacity: 1, color: 'var(--done)', cursor: 'default' },
   chip: {
     display: 'flex', alignItems: 'center', gap: 8, width: '100%',
     padding: '5px 8px', border: 'none', background: 'transparent',
