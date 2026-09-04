@@ -31,11 +31,18 @@ router = APIRouter(prefix="/memory", tags=["memory-cards"])
 _STREAK_TO_ARCHIVE = 3
 
 
+_NO_CONCEPT_SENTINEL = "00000000-0000-0000-0000-000000000000"
+
+
 def _card_out(c: MemoryCard) -> dict:
+    # 无概念卡的 concept_id 出库还原为 null（库里存零值哨兵是为了吃唯一索引去重）
+    cid = str(c.concept_id) if c.concept_id else None
+    if cid == _NO_CONCEPT_SENTINEL:
+        cid = None
     return {
         "card_id": str(c.card_id),
         "user_id": c.user_id,
-        "concept_id": str(c.concept_id) if c.concept_id else None,
+        "concept_id": cid,
         "qa_id": str(c.qa_id) if c.qa_id else None,
         "concept_name": c.concept_name,
         "question": c.question,

@@ -81,7 +81,7 @@ async def _find_missing_checked(limit: int = 40) -> list[dict]:
                 .where(MemoryCard.qa_id.in_(qa_ids))
             )
         ).all()
-        done = {(str(r.qa_id), str(r.concept_id) if r.concept_id else None) for r in existing}
+        done = {(str(r.qa_id), str(r.concept_id) if r.concept_id else _NO_CONCEPT_ID) for r in existing}
         # 概念名批量查（冗余名防概念节点后续被删/合并）
         cids = set()
         for r in rows:
@@ -103,6 +103,9 @@ async def _find_missing_checked(limit: int = 40) -> list[dict]:
         pending = [c for c in concepts if (str(r.qa_id), c) not in done]
         # 该层所有概念都有卡 → 整层跳过；概念层很多时只取前 5 个防刷屏
         if concepts and not pending:
+            continue
+        # 无概念层已建过卡（哨兵命中）→ 跳过
+        if not concepts and (str(r.qa_id), _NO_CONCEPT_ID) in done:
             continue
         out.append({
             "user_id": r.user_id or "default",
@@ -194,6 +197,11 @@ def _fallback_card(question: str, answer: str, concept_name: str | None) -> dict
     return {"question": front, "answer": "；".join(parts)}
 
 
+# 无概念卡的 concept_id 哨兵：PG 唯一索引对 NULL 不去重（NULL ≠ NULL），
+# 无概念层每次扫描都会重复建卡。用全零 UUID 参与唯一键，出库时还原为 null。
+_NO_CONCEPT_ID = "00000000-0000-0000-0000-000000000000"
+
+
 async def _insert_card(
     user_id: str, concept_id: str | None, concept_name: str,
     qa_id: str | None, session_id: str | None,
@@ -204,7 +212,8 @@ async def _insert_card(
     async with session_scope() as s:
         card = MemoryCard(
             user_id=user_id,
-            concept_id=concept_id,
+            # None -> 零值哨兵：无概念卡也吃唯一索引去重
+            concept_id=concept_id or _NO_CONCEPT_ID,
             qa_id=qa_id,
             session_id=session_id,
             concept_name=concept_name or "未命名概念",
