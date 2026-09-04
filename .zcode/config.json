@@ -1,0 +1,18 @@
+{
+  "mcp": {
+    "servers": {
+      "starmind": {
+        "type": "stdio",
+        "command": "C:\\Users\\KZHANG82\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+        "args": [
+          "C:\\Kais_Projects\\Git_Projects\\Github\\starMindAgent\\growth-agent-integrated\\mcp-server\\server.py"
+        ],
+        "env": {
+          "SMA_BACKEND": "http://127.0.0.1:8000",
+          "SMA_USER_ID": "default"
+        },
+        "timeoutMs": 620000
+      }
+    }
+  }
+}
